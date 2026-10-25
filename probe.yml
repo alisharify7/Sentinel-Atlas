@@ -1,0 +1,71 @@
+---
+- name: Read Redis telemetry
+  hosts: "{{ dashboard_redis_group }}:{{ dashboard_sentinel_group }}"
+  gather_facts: false
+  become: true
+  vars:
+    dashboard_platform: "{{ dashboard_deployment | default('nspawn' if container_name is defined else 'host') }}"
+    dashboard_default_storage:
+      - label: Redis data
+        host_path: "{{ redis_data_mount_point | default(redis_configs.dir | default('/var/lib/redis')) }}"
+        container_path: "{{ redis_data_container_path | default('/var/lib/redis') }}"
+      - label: Redis logs
+        host_path: "{{ redis_log_mount_point | default('/var/log/redis') }}"
+        container_path: "{{ redis_log_container_path | default('/var/log/redis') }}"
+      - label: Sentinel logs
+        host_path: "{{ sentinel_log_mount_point | default('/var/log/redis-sentinel') }}"
+        container_path: "{{ sentinel_log_container_path | default('/var/log/redis-sentinel') }}"
+    dashboard_container_storage:
+      - label: Container OS
+        host_path: "{{ container_rootfs_directory | default('/var/lib/machines/' ~ inventory_hostname) }}"
+        container_path: /
+    dashboard_metadata:
+      name: "{{ inventory_hostname }}"
+      address: "{{ dashboard_advertise_address | default(ansible_host | default(inventory_hostname)) }}"
+      deployment: "{{ dashboard_platform }}"
+      container: "{{ container_name | default('') }}"
+      cluster: "{{ redis_sentinel_master_name | default('redis') }}"
+      redis_member: "{{ inventory_hostname in groups.get(dashboard_redis_group, []) }}"
+      sentinel_member: "{{ inventory_hostname in groups.get(dashboard_sentinel_group, []) }}"
+      redis_port: "{{ redis_listen_port | default(6379) | int }}"
+      sentinel_port: "{{ redis_sentinel_port | default(26379) | int }}"
+      sentinel_address: "{{ ansible_host | default(inventory_hostname) }}"
+      storage: "{{ dashboard_storage | default((dashboard_container_storage if dashboard_platform == 'nspawn' else []) + dashboard_default_storage) }}"
+  tasks:
+    - name: Validate server deployment
+      ansible.builtin.assert:
+        that: dashboard_platform in ['host', 'nspawn']
+        quiet: true
+    - name: Dashboard public metadata
+      ansible.builtin.debug:
+        msg:
+          dashboard_metadata: "{{ dashboard_metadata }}"
+    - name: Dashboard read-only probe
+      ansible.builtin.command:
+        argv:
+          - "{{ dashboard_python | default('/usr/bin/python3') }}"
+          - -c
+          - "{{ lookup('ansible.builtin.file', playbook_dir ~ '/remote_probe.py') }}"
+        stdin: >-
+          {{ {'public': dashboard_metadata,
+              'redis_password': redis_password | default(''),
+              'redis_username': redis_username | default(''),
+              'sentinel_password': sentinel_password | default(''),
+              'sentinel_username': sentinel_username | default(''),
+              'redis_host': dashboard_redis_host | default('127.0.0.1'),
+              'sentinel_host': dashboard_sentinel_host | default('127.0.0.1'),
+              'redis_cli': dashboard_redis_cli | default('/usr/bin/redis-cli'),
+              'tls': dashboard_tls | default(false) | bool,
+              'tls_ca': dashboard_tls_ca | default(''),
+              'redis_service': dashboard_redis_service | default('redis-server'),
+              'sentinel_service': dashboard_sentinel_service | default('redis-sentinel'),
+              'redis_logfile': redis_dashboard_logfile | default(redis_configs.logging_config.logfile | default('/var/log/redis/redis-server.log')),
+              'redis_logfile_override': redis_dashboard_logfile | default(none),
+              'sentinel_logfile': sentinel_dashboard_logfile | default(redis_sentinel_logging_config.logfile | default('/var/log/redis-sentinel/redis-sentinel.log'))} | to_json }}
+      register: dashboard_probe
+      changed_when: false
+      no_log: true
+    - name: Dashboard public telemetry
+      ansible.builtin.debug:
+        msg:
+          dashboard_telemetry: "{{ dashboard_probe.stdout | from_json }}"

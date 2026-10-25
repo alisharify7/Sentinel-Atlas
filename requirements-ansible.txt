@@ -1,0 +1,2 @@
+# Optional: only for SSH/server probes, not direct Redis monitoring.
+ansible-core>=2.18,<2.22

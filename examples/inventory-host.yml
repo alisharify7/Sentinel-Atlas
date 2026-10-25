@@ -1,0 +1,22 @@
+all:
+  children:
+    redis_nodes:
+      hosts:
+        cache:
+          ansible_host: 192.0.2.10
+          ansible_user: ubuntu
+          ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+          dashboard_deployment: host
+          # Python and redis-cli already installed on this server.
+          redis_listen_port: 6379
+          redis_sentinel_master_name: standalone
+          # Put authentication in Ansible Vault instead of this example.
+          # redis_username: dashboard
+          # redis_password: "{{ vaulted_redis_password }}"
+          redis_dashboard_logfile: /var/log/redis/redis-server.log
+          # Empty log path uses journalctl; change service name if necessary.
+          dashboard_redis_service: redis-server
+          dashboard_storage:
+            - label: Redis data
+              host_path: /var/lib/redis
+    # Omit sentinel_nodes entirely for standalone Redis.

@@ -1,0 +1,14 @@
+all:
+  children:
+    redis_nodes:
+      hosts:
+        cache:
+          ansible_host: 192.0.2.10
+          ansible_user: ubuntu
+          dashboard_deployment: nspawn
+          container_name: redis1
+          redis_listen_port: 6379
+          redis_sentinel_master_name: redis-main
+    sentinel_nodes:
+      children:
+        redis_nodes: {}

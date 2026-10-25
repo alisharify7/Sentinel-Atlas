@@ -1,0 +1,17 @@
+# Set these environment variables before launching the app.
+# Independent Redis servers belong to different clusters.
+nodes:
+  - name: cache
+    cluster: standalone
+    url_env: CACHE_REDIS_URL
+  - name: primary
+    cluster: redis-main
+    url_env: PRIMARY_REDIS_URL
+    sentinel_url_env: PRIMARY_SENTINEL_URL
+  - name: replica
+    cluster: redis-main
+    url_env: REPLICA_REDIS_URL
+    sentinel_url_env: REPLICA_SENTINEL_URL
+# URLs use redis://[username:password@]host:port/db or rediss:// for TLS.
+# Optional target fields: advertise_address, advertise_port (replication endpoints),
+# ssl_ca_certs, ssl_certfile, ssl_keyfile. TLS certificates are always verified.
