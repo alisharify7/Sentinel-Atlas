@@ -10,9 +10,9 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 
 import redis
 
-from direct_monitor import DirectMonitor
-from settings import Settings
-from remote_probe import probe
+from sentinel_atlas.monitoring.direct_monitor import DirectMonitor
+from sentinel_atlas.settings import Settings
+from sentinel_atlas.probes.remote_probe import probe
 
 
 class FakeRedis:
@@ -29,7 +29,7 @@ class DirectTests(unittest.TestCase):
             def execute_command(self,*args):
                 if args[1]=='MASTER':return ['ip','localhost','port','6379','flags','master','quorum','1','num-slaves','0','num-other-sentinels','0']
                 return 'OK 1 usable Sentinels. Quorum can be reached'
-        with patch.dict(os.environ,{'REDIS_URL':'redis://localhost:6379','SENTINEL_URL':'redis://localhost:26379'},clear=True),patch('direct_monitor.redis.Redis',SentinelRedis):
+        with patch.dict(os.environ,{'REDIS_URL':'redis://localhost:6379','SENTINEL_URL':'redis://localhost:26379'},clear=True),patch('sentinel_atlas.monitoring.direct_monitor.redis.Redis',SentinelRedis):
             monitor=DirectMonitor(Settings(backend='direct'))
             monitor.poll_once()
             self.assertEqual(monitor.snapshot()['status'],'healthy')
@@ -37,7 +37,7 @@ class DirectTests(unittest.TestCase):
             monitor.stop()
 
     def test_standalone_needs_no_ansible_and_keeps_credentials_private(self):
-        with patch.dict(os.environ,{'REDIS_URL':'redis://user:secret-value@localhost:6381/0'},clear=True),patch('direct_monitor.redis.Redis',FakeRedis):
+        with patch.dict(os.environ,{'REDIS_URL':'redis://user:secret-value@localhost:6381/0'},clear=True),patch('sentinel_atlas.monitoring.direct_monitor.redis.Redis',FakeRedis):
             settings=Settings.from_env()
             self.assertEqual(settings.backend,'direct')
             monitor=DirectMonitor(settings)
@@ -54,7 +54,7 @@ class DirectTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/'targets.yml'
             path.write_text('nodes:\n  - {name: a, cluster: alpha, url: "redis://a:6379"}\n  - {name: b, cluster: beta, url: "redis://b:6379"}\n')
-            with patch('direct_monitor.redis.Redis',FakeRedis):
+            with patch('sentinel_atlas.monitoring.direct_monitor.redis.Redis',FakeRedis):
                 monitor=DirectMonitor(Settings(backend='direct',targets=path))
                 monitor.poll_once()
                 self.assertEqual(monitor.snapshot('alpha')['status'],'healthy')
@@ -64,7 +64,7 @@ class DirectTests(unittest.TestCase):
                 monitor.stop()
 
     def test_auth_errors_are_down_without_exposing_connection_details(self):
-        with patch.dict(os.environ,{'REDIS_URL':'redis://user:private-secret@localhost:6379'},clear=True),patch('direct_monitor.redis.Redis',FakeRedis),patch.object(FakeRedis,'info',side_effect=redis.AuthenticationError('private-secret')):
+        with patch.dict(os.environ,{'REDIS_URL':'redis://user:private-secret@localhost:6379'},clear=True),patch('sentinel_atlas.monitoring.direct_monitor.redis.Redis',FakeRedis),patch.object(FakeRedis,'info',side_effect=redis.AuthenticationError('private-secret')):
             monitor=DirectMonitor(Settings(backend='direct'))
             monitor.poll_once()
             snapshot=monitor.snapshot()
@@ -82,7 +82,7 @@ class DirectTests(unittest.TestCase):
             if 'tail' in ' '.join(args):return 'Ready to accept connections',None
             return '',None
         public={'name':'native','deployment':'host','container':'','cluster':'standalone','redis_member':True,'sentinel_member':False,'redis_port':6379,'storage':[]}
-        with patch('remote_probe.run',side_effect=run),patch('remote_probe.hardware',return_value={}),patch('remote_probe.storage',return_value=[]):
+        with patch('sentinel_atlas.probes.remote_probe.run',side_effect=run),patch('sentinel_atlas.probes.remote_probe.hardware',return_value={}),patch('sentinel_atlas.probes.remote_probe.storage',return_value=[]):
             result=probe({'public':public,'redis_password':'private-secret'})
         self.assertTrue(result['redis']['up'])
         self.assertTrue(all('systemd-run' not in args for args in calls))

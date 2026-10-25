@@ -39,7 +39,7 @@ For authenticated Redis, use `redis://username:password@host:port/0` (or
 characters in credentials. Use `rediss://` for TLS with certificate verification.
 
 ```bash
-python app.py
+python -m sentinel_atlas
 ```
 
 Open **http://127.0.0.1:5050** and sign in with the account from `.env`.
@@ -117,7 +117,7 @@ SENTINEL_BACKEND=direct
 SENTINEL_TARGETS=/absolute/path/to/targets.yml
 ```
 
-Or use `python app.py --targets /path/to/targets.yml`. YAML and JSON are supported:
+Or use `python -m sentinel_atlas --targets /path/to/targets.yml`. YAML and JSON are supported:
 
 ```yaml
 nodes:
@@ -244,12 +244,12 @@ Process environment overrides `.env`. CLI `--inventory`, `--targets`, `--host`,
 | `SENTINEL_REDIS_GROUP` / `SENTINEL_SENTINEL_GROUP` | `redis_nodes` / `sentinel_nodes` |
 | `SENTINEL_HOST` / `SENTINEL_PORT` | `127.0.0.1` / `5050` |
 
-Preview labelled sample data with `python app.py --demo`. Login is required in
+Preview labelled sample data with `python -m sentinel_atlas --demo`. Login is required in
 demo mode too; it makes no monitoring connections.
 
 An external Ansible repository can keep a `visualize.sh` launcher that points to
 this checkout. It supplies inventory/config paths and installs the optional
-Ansible requirements. Sentinel Atlas also runs independently with `python app.py`.
+Ansible requirements. Sentinel Atlas also runs independently with `python -m sentinel_atlas`.
 
 ## Tests
 

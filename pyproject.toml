@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sentinel-atlas"
+version = "0.1.0"
+description = "An authenticated Redis and Sentinel observatory"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "GPL-2.0-only"
+license-files = ["LICENSE"]
+dynamic = ["dependencies", "optional-dependencies"]
+
+[project.urls]
+Repository = "https://github.com/alisharify7/Sentinel-Atlas"
+Issues = "https://github.com/alisharify7/Sentinel-Atlas/issues"
+
+[project.scripts]
+sentinel-atlas = "sentinel_atlas.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["sentinel_atlas*"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.dynamic.optional-dependencies]
+ansible = {file = ["requirements-ansible.txt"]}
+
+[tool.setuptools.package-data]
+sentinel_atlas = ["templates/*.html", "static/*.css", "static/*.js", "static/*.svg", "probes/*.yml", "probes/callback_plugins/*.py"]

@@ -16,6 +16,7 @@
 <p align="center">
   <a href="#quick-start">Quick start</a> &nbsp;·&nbsp;
   <a href="#connect-your-redis">Connect Redis</a> &nbsp;·&nbsp;
+  <a href="docs/docker.md">Docker</a> &nbsp;·&nbsp;
   <a href="docs/configuration.md">Configuration guide</a> &nbsp;·&nbsp;
   <a href="#development">Contributing</a> &nbsp;·&nbsp;
   <a href="LICENSE">License</a>
@@ -95,18 +96,34 @@ not reset their passwords. SQLite is ready to use by default.
 ### 3. Take a look around
 
 ```bash
-python app.py --demo
+python -m sentinel_atlas --demo
 ```
 
 Open **[localhost:5050](http://127.0.0.1:5050)** and sign in. Demo mode uses clearly
 labelled sample data and includes healthy, outage, and master-promotion scenarios.
 It makes no Redis or SSH connections. Login is required in demo mode too.
 
+## Run with Docker
+
+Copy `.env.example` to `.env`, choose your administrator password, and set
+`REDIS_URL` to an endpoint reachable from Docker. Then:
+
+```bash
+docker compose up -d --build
+```
+
+Open **http://127.0.0.1:5050**. The container runs as a non-root user with
+Waitress; a named volume preserves its SQLite accounts and signing key.
+For Redis on the Docker host, use `host.docker.internal` instead of `localhost`.
+
+The [Docker guide](docs/docker.md) includes demo mode, a PostgreSQL stack,
+read-only target mounts, an optional Ansible image, and image verification.
+
 ## Connect your Redis
 
 ### Standalone Redis
 
-Add these settings to `.env`, then run `python app.py` without `--demo`:
+Add these settings to `.env`, then run `python -m sentinel_atlas` without `--demo`:
 
 ```dotenv
 SENTINEL_BACKEND=direct
@@ -158,7 +175,7 @@ for Sentinel-only nodes, TLS certificates, ACL credentials, and NAT endpoints.
 | TLS and ACL authentication | ✓ | ✓ |
 | Server CPU, memory, and storage | — | ✓ |
 | Redis and Sentinel log files | — | ✓ |
-| Dashboard runs on Windows/macOS/Linux | ✓ | Ansible controller on Linux/macOS |
+| Dashboard runs on Windows/macOS/Linux | ✓ | Docker, or a Linux/macOS controller |
 | Server deployment | Any reachable Redis endpoint | Ordinary Linux hosts or systemd-nspawn |
 
 The Redis protocol does not expose operating-system metrics or server log files.
@@ -207,6 +224,11 @@ for limits and [environment settings](docs/configuration.md#settings-and-launche
 for polling, ports, and backend selection.
 
 ## Development
+
+Application code lives in `sentinel_atlas/`, with monitoring workers, remote
+probes, templates, and static assets grouped inside the package. See the
+[layout and development guide](docs/development.md) for package installation
+and entry points. Existing `python app.py` commands continue to work.
 
 ```bash
 python -m unittest discover -s tests -v

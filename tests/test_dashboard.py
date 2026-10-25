@@ -8,12 +8,13 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from app import create_app
-from demo import DemoMonitor
-from monitor import ClusterState, LiveMonitor, CollectionError, parse_records
-from settings import Settings
-from public_schema import clean_record
-from remote_probe import probe, read_logs, redact_log
+from sentinel_atlas import create_app
+from sentinel_atlas.monitoring.demo import DemoMonitor
+from sentinel_atlas.monitoring.monitor import ClusterState, LiveMonitor, CollectionError, parse_records
+from sentinel_atlas.settings import Settings
+from sentinel_atlas.monitoring.public_schema import clean_record
+from sentinel_atlas.probes.remote_probe import probe, read_logs, redact_log
+from sentinel_atlas.paths import PROBE_DIR
 
 
 def records():
@@ -123,7 +124,7 @@ class BoundaryTests(unittest.TestCase):
         def fake(args,password=None,timeout=3):
             calls.append(args)
             return lines,None
-        with patch('remote_probe.run',side_effect=fake):
+        with patch('sentinel_atlas.probes.remote_probe.run',side_effect=fake):
             data=read_logs(['systemd-run'],path,'redis-server',['secret-four'])
         self.assertEqual(calls[0][-5:],['/usr/bin/tail','-c','32768','--',path])
         self.assertEqual(len(data['lines']),120)
@@ -132,7 +133,7 @@ class BoundaryTests(unittest.TestCase):
             self.assertNotIn(secret,serialized)
         self.assertNotIn('\x1b',''.join(data['lines']))
         self.assertEqual(read_logs([], '../private-key','redis-server',[])['status'],'unavailable')
-        with patch('remote_probe.run',return_value=('journal entry',None)) as journal:
+        with patch('sentinel_atlas.probes.remote_probe.run',return_value=('journal entry',None)) as journal:
             self.assertEqual(read_logs([], '', 'redis-sentinel',[])['lines'],['journal entry'])
             self.assertEqual(journal.call_args.args[0][-1],'redis-sentinel.service')
 
@@ -157,7 +158,6 @@ class BoundaryTests(unittest.TestCase):
 
     def test_callback_with_real_ansible_retains_public_metadata_and_telemetry(self):
         import os
-        app_dir=Path(__file__).resolve().parents[1]
         if not (Path(sys.executable).parent/'ansible-playbook').exists():
             self.skipTest('Optional Ansible dependencies are not installed.')
         with tempfile.TemporaryDirectory() as folder:
@@ -183,7 +183,7 @@ class BoundaryTests(unittest.TestCase):
             redis: {up: true, role: master, requirepass: HIDDEN}
 ''')
             env=dict(os.environ,ANSIBLE_CONFIG=str(root/'ansible.cfg'),ANSIBLE_STDOUT_CALLBACK='dashboard_json',
-                ANSIBLE_CALLBACK_PLUGINS=str(app_dir/'callback_plugins'),ANSIBLE_CALLBACKS_ENABLED='dashboard_json',ANSIBLE_LOG_PATH=os.devnull)
+                ANSIBLE_CALLBACK_PLUGINS=str(PROBE_DIR/'callback_plugins'),ANSIBLE_CALLBACKS_ENABLED='dashboard_json',ANSIBLE_LOG_PATH=os.devnull)
             result=subprocess.run([str(Path(sys.executable).parent/'ansible-playbook'),'-i',str(root/'inventory.yml'),str(root/'probe.yml')],
                 env=env,cwd=root,capture_output=True,text=True,timeout=20)
             self.assertEqual(result.returncode,0)
@@ -226,7 +226,7 @@ class BoundaryTests(unittest.TestCase):
             if 'MASTER' in args: return 'ip\n192.168.10.10\nport\n6379\nflags\nmaster',None
             if args[0]=='systemctl': return 'ActiveState=active\nMemoryCurrent=100',None
             return '{}',None
-        with patch('remote_probe.run',side_effect=fake_run),patch('remote_probe.hardware',return_value={}),patch('remote_probe.storage',return_value=[]):
+        with patch('sentinel_atlas.probes.remote_probe.run',side_effect=fake_run),patch('sentinel_atlas.probes.remote_probe.hardware',return_value={}),patch('sentinel_atlas.probes.remote_probe.storage',return_value=[]):
             result=probe({'public':public,'redis_password':'NEVER-RETURN-THIS','sentinel_password':'NEVER-RETURN-THIS'})
         self.assertTrue(result['redis']['up'])
         self.assertNotIn('NEVER-RETURN-THIS',json.dumps(result))

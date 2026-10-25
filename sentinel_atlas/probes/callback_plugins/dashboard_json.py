@@ -4,8 +4,8 @@ import sys
 from pathlib import Path
 
 from ansible.plugins.callback import CallbackBase
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from public_schema import clean_record
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from sentinel_atlas.monitoring.public_schema import clean_record
 
 DOCUMENTATION = r"""
 name: dashboard_json

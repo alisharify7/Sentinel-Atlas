@@ -1,7 +1,7 @@
 """Explicitly labelled sample data; no connection to any Ansible project."""
 import math
 import time
-from monitor import ClusterState
+from .monitor import ClusterState
 
 
 class DemoMonitor(ClusterState):

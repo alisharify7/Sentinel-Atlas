@@ -9,8 +9,8 @@ from redis.backoff import NoBackoff
 from redis.retry import Retry
 import yaml
 
-from monitor import LiveMonitor
-from remote_probe import service_metrics
+from .monitor import LiveMonitor
+from ..probes.remote_probe import service_metrics
 
 
 def resolve_url(node, prefix):

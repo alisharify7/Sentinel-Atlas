@@ -1,0 +1,29 @@
+services:
+  atlas:
+    image: sentinel-atlas:local
+    build:
+      context: .
+      target: runtime
+    init: true
+    env_file: ${ATLAS_ENV_FILE:-.env}
+    environment:
+      SENTINEL_HOST: 0.0.0.0
+      SENTINEL_PORT: "5050"
+      SENTINEL_INSTANCE_PATH: /var/lib/sentinel-atlas
+    ports:
+      - "${ATLAS_BIND_ADDRESS:-127.0.0.1}:${ATLAS_PORT:-5050}:5050"
+    volumes:
+      - atlas-data:/var/lib/sentinel-atlas
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  atlas-data:

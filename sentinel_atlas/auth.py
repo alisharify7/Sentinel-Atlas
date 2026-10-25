@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 from flask import abort, flash, g, jsonify, redirect, render_template, request, session, url_for
 from sqlalchemy.exc import SQLAlchemyError
 
-from database import AccountStore
+from .database import AccountStore
 
 
 def env_value(name, fallback=None):
@@ -70,7 +70,7 @@ def init_auth(app, overrides=None):
 
     @app.before_request
     def authenticate_request():
-        if request.endpoint == 'static':
+        if request.endpoint in ('static', 'health'):
             return
         g.user = store.session_user(session.get('auth_token'))
         if request.endpoint != 'login' and not g.user:

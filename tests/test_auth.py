@@ -10,10 +10,10 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import select, update
 
-from app import create_app
-from auth import persistent_key
-from database import AccountStore, LoginSession, User, database_url
-from demo import DemoMonitor
+from sentinel_atlas import create_app
+from sentinel_atlas.auth import persistent_key
+from sentinel_atlas.database import AccountStore, LoginSession, User, database_url
+from sentinel_atlas.monitoring.demo import DemoMonitor
 
 
 class AuthTests(unittest.TestCase):
@@ -40,6 +40,9 @@ class AuthTests(unittest.TestCase):
         return self.client.post(path,data=dict(data or {},csrf_token=csrf))
 
     def test_all_monitoring_and_logs_require_login(self):
+        health=self.client.get('/healthz')
+        self.assertEqual(health.status_code,200)
+        self.assertEqual(health.json,{'status':'ok'})
         self.assertEqual(self.client.get('/').status_code,302)
         for path in ('/api/cluster','/api/logs/redis2/redis','/api/logs/redis2/sentinel'):
             response=self.client.get(path)
@@ -113,6 +116,17 @@ class AuthTests(unittest.TestCase):
     def test_missing_initial_password_fails_without_insecure_default(self):
         with self.assertRaisesRegex(ValueError,'DEFAULT_PASSWORD'):
             create_app(DemoMonitor(),{'DATABASE_URL':'sqlite://','SECRET_KEY':'x'*40,'DEFAULT_PASSWORD':None})
+
+    def test_instance_override_keeps_database_and_signing_key_together(self):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ,{
+            'SENTINEL_INSTANCE_PATH':folder,'SENTINEL_ENV_FILE':os.devnull,
+            'DEFAULT_ACCOUNT':'owner','DEFAULT_PASSWORD':'owner-password'},clear=True):
+            app=create_app(DemoMonitor())
+            try:
+                self.assertEqual(Path(app.instance_path),Path(folder).resolve())
+                self.assertTrue((Path(folder)/'atlas.sqlite').is_file())
+                self.assertTrue((Path(folder)/'session.key').is_file())
+            finally:app.extensions['accounts'].engine.dispose()
 
     def test_lowercase_bootstrap_environment_names_are_supported(self):
         with patch.dict(os.environ,{'default_account':'owner','default_password':'owner-password',

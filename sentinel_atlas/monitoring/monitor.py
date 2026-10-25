@@ -8,10 +8,10 @@ import subprocess
 import threading
 import time
 
-from public_schema import clean_record
-from settings import Settings
+from .public_schema import clean_record
+from ..settings import Settings
 
-APP_DIR = Path(__file__).resolve().parent
+from ..paths import PROBE_DIR
 
 
 class CollectionError(RuntimeError):
@@ -172,7 +172,7 @@ class LiveMonitor(ClusterState):
         if not executable:
             raise RuntimeError('Ansible is unavailable. Set SENTINEL_ANSIBLE_PLAYBOOK to your ansible-playbook executable.')
         env = dict(os.environ,
-            ANSIBLE_STDOUT_CALLBACK='dashboard_json', ANSIBLE_CALLBACK_PLUGINS=str(APP_DIR / 'callback_plugins'),
+            ANSIBLE_STDOUT_CALLBACK='dashboard_json', ANSIBLE_CALLBACK_PLUGINS=str(PROBE_DIR / 'callback_plugins'),
             ANSIBLE_CALLBACKS_ENABLED='dashboard_json', ANSIBLE_LOG_PATH=os.devnull, ANSIBLE_NOCOLOR='1',
             ANSIBLE_FORCE_COLOR='0', ANSIBLE_TIMEOUT=str(self.settings.ssh_timeout), ANSIBLE_RETRY_FILES_ENABLED='False')
         if self.settings.ansible_config:
@@ -181,7 +181,7 @@ class LiveMonitor(ClusterState):
             env['ANSIBLE_VAULT_PASSWORD_FILE'] = str(self.settings.vault_password_file)
         workdir = self.settings.ansible_config.parent if self.settings.ansible_config else self.settings.inventory.parent
         process = subprocess.Popen([executable, '-i', str(self.settings.inventory),
-            str(APP_DIR / 'probe.yml'), '--forks', '10', '--extra-vars',
+            str(PROBE_DIR / 'probe.yml'), '--forks', '10', '--extra-vars',
             json.dumps({'dashboard_redis_group': self.settings.redis_group,
                         'dashboard_sentinel_group': self.settings.sentinel_group})], cwd=workdir, env=env,
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,

@@ -16,11 +16,11 @@ from unittest.mock import patch
 import psycopg
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from app import create_app
-from database import AccountStore
-from demo import DemoMonitor
-from direct_monitor import DirectMonitor
-from settings import Settings
+from sentinel_atlas import create_app
+from sentinel_atlas.database import AccountStore
+from sentinel_atlas.monitoring.demo import DemoMonitor
+from sentinel_atlas.monitoring.direct_monitor import DirectMonitor
+from sentinel_atlas.settings import Settings
 
 
 def docker(*args, stdin=None):
