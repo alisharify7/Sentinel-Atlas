@@ -34,11 +34,42 @@ def pairs(text):
     return dict(zip(lines[::2], lines[1::2]))
 
 
+def clean_configuration(value, secrets=()):
+    """Bound runtime settings and remove credentials before transport."""
+    if not isinstance(value, dict):
+        return {}
+    sensitive = re.compile(r'(?i)(requirepass|masterauth|masteruser|password|passphrase|secret|token|credential|(?:^|[._-])(?:auth|users?|private[-_.]?key)$|(?:^|[._-])key[-_.]file|^aclfile$)')
+    hidden = {str(secret) for secret in secrets if secret}
+    hidden.update(str(setting) for name, setting in value.items()
+                  if isinstance(name, str) and sensitive.search(name) and setting)
+    result = {}
+    for name, setting in list(value.items())[:1024]:
+        if not isinstance(name, str) or not re.fullmatch(r'[a-zA-Z0-9_.-]{1,128}', name):
+            continue
+        if not isinstance(setting, (str, int, float, bool)):
+            continue
+        text = str(setting)
+        if sensitive.search(name):
+            text = '[REDACTED]' if text else ''
+        else:
+            text = redact_log(text, hidden)
+        result[name] = text[:4096]
+    return result
+
+
 def number(value, default=0):
     try:
         return float(value)
     except (ValueError, TypeError):
         return default
+
+
+def replication_offset(value):
+    try:
+        result = int(value)
+        return result if result >= 0 else None
+    except (ValueError, TypeError, OverflowError):
+        return None
 
 
 def read_file(path):
@@ -127,13 +158,21 @@ def read_logs(base, path, service, secrets):
             'lines': [line[:1000] for line in lines]}
 
 
-def service_metrics(values):
+def service_metrics(values, secrets=()):
     info = {}
     for line in (values.get('info', ('', None))[0] or '').splitlines():
         key, sep, value = line.partition(':')
         if sep and not key.startswith('#'):
             info[key] = value.strip()
-    runtime = pairs(values.get('config', ('', None))[0])
+    raw_config, config_error = values.get('config', (None, None))
+    if isinstance(raw_config, str):
+        try:
+            raw_config = json.loads(raw_config)
+        except ValueError:
+            raw_config = pairs(raw_config)
+    if isinstance(raw_config, list):
+        raw_config = dict(zip(raw_config[::2], raw_config[1::2]))
+    runtime = clean_configuration(raw_config, secrets)
     redis = {"up": bool(info.get('redis_version')), "error": values.get('info', (None, None))[1]}
     if redis['up']:
         redis.update(role='replica' if info.get('role') in ('slave', 'replica') else info.get('role', 'unknown'),
@@ -143,11 +182,19 @@ def service_metrics(values):
             memory_max=number(info.get('maxmemory')), connected_replicas=number(info.get('connected_slaves')),
             upstream=info.get('master_host'), upstream_port=number(info.get('master_port')),
             link=info.get('master_link_status'), syncing=info.get('master_sync_in_progress') == '1',
-            replication_offset=number(info.get('master_repl_offset')),
-            last_master_io=number(info.get('master_last_io_seconds_ago')),
+            replication_offset=replication_offset(info.get('slave_repl_offset') if info.get('role') in ('slave', 'replica') else info.get('master_repl_offset')),
+            replication_id=info.get('master_replid'),
+            last_master_io=number(info.get('master_last_io_seconds_ago'), None),
+            link_down_seconds=number(info.get('master_link_down_since_seconds'), None),
+            sync_total_bytes=number(info.get('master_sync_total_bytes'), None),
+            sync_read_bytes=number(info.get('master_sync_read_bytes'), None),
+            sync_left_bytes=number(info.get('master_sync_left_bytes'), None),
+            loading=info.get('loading') == '1',
+            loading_percent=number(info.get('loading_loaded_perc'), None),
             aof_enabled=info.get('aof_enabled') == '1', rdb_status=info.get('rdb_last_bgsave_status'),
             aof_status=info.get('aof_last_write_status'), data_directory=runtime.get('dir'),
-            logfile=runtime.get('logfile'), config_file=info.get('config_file'))
+            logfile=runtime.get('logfile'), config_file=info.get('config_file'),
+            configuration=runtime, config_status='ok' if isinstance(raw_config, dict) and not config_error else 'unavailable')
     master = pairs(values.get('sentinel', ('', None))[0])
     quorum = values.get('quorum', (None, None))
     sentinel = {"up": bool(master.get('ip')), "error": values.get('sentinel', (None, None))[1],
@@ -168,7 +215,7 @@ def probe(config):
             '--expand-environment=no'] if nspawn else []
     def query(port, command, password, username=None, host='127.0.0.1'):
         args = base + (['--setenv=REDISCLI_AUTH'] if password and nspawn else [])
-        args += [config.get('redis_cli', '/usr/bin/redis-cli'), '--raw', '-e', '-h', host, '-p', str(port)]
+        args += [config.get('redis_cli', '/usr/bin/redis-cli'), '--json' if command[0] == 'CONFIG' else '--raw', '-e', '-h', host, '-p', str(port)]
         if username:
             args += ['--user', username]
         if config.get('tls'):
@@ -181,7 +228,7 @@ def probe(config):
         futures = {}
         if public.get('redis_member'):
             futures['info'] = executor.submit(query, public['redis_port'], ['INFO'], config.get('redis_password'), config.get('redis_username'), config.get('redis_host', '127.0.0.1'))
-            futures['config'] = executor.submit(query, public['redis_port'], ['CONFIG', 'GET', 'dir', 'logfile'], config.get('redis_password'), config.get('redis_username'), config.get('redis_host', '127.0.0.1'))
+            futures['config'] = executor.submit(query, public['redis_port'], ['CONFIG', 'GET', '*'], config.get('redis_password'), config.get('redis_username'), config.get('redis_host', '127.0.0.1'))
         if public.get('sentinel_member'):
             futures['sentinel'] = executor.submit(query, public['sentinel_port'], ['SENTINEL', 'MASTER', public['cluster']], config.get('sentinel_password'), config.get('sentinel_username'), config.get('sentinel_host', '127.0.0.1'))
             futures['quorum'] = executor.submit(query, public['sentinel_port'], ['SENTINEL', 'CKQUORUM', public['cluster']], config.get('sentinel_password'), config.get('sentinel_username'), config.get('sentinel_host', '127.0.0.1'))
@@ -189,9 +236,9 @@ def probe(config):
         futures['unit'] = executor.submit(run, ['systemctl', 'show', unit_name,
             '--property=ActiveState,MemoryCurrent,MemoryMax,CPUQuotaPerSecUSec,TasksCurrent'], None, 2)
         values = {name: future.result() for name, future in futures.items()}
-    redis, sentinel, runtime = service_metrics(values)
-    unit = dict(line.split('=', 1) for line in (values['unit'][0] or '').splitlines() if '=' in line)
     secrets = (config.get('redis_password'), config.get('sentinel_password'))
+    redis, sentinel, runtime = service_metrics(values, secrets)
+    unit = dict(line.split('=', 1) for line in (values['unit'][0] or '').splitlines() if '=' in line)
     logs = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         readers = {}

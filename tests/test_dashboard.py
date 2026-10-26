@@ -199,10 +199,27 @@ class BoundaryTests(unittest.TestCase):
         clean=clean_record(value)
         self.assertNotIn('NEVER-RETURN-THIS',json.dumps(clean))
 
+    def test_configuration_api_preserves_node_settings_and_redacts_at_public_boundary(self):
+        data=records()
+        data['redis1']['telemetry']['redis']['configuration'].update({
+            'requirepass':'NEVER-RETURN-THIS','masterauth':'REPLICA-SECRET',
+            'module.password':'MODULE-SECRET','invalid key':'UNSAFE',
+            'nested':{'password':'NESTED-SECRET'},'maxclients':'123'})
+        state=ClusterState()
+        state.apply(data)
+        client=logged_in_client(state)
+        self.addCleanup(client.application.extensions['accounts'].engine.dispose)
+        snapshot=client.get('/api/cluster').json
+        node=next(node for node in snapshot['nodes'] if node['name']=='redis1')
+        self.assertEqual(node['redis']['configuration']['maxclients'],'123')
+        self.assertEqual(node['redis']['configuration']['requirepass'],'[REDACTED]')
+        for secret in ('NEVER-RETURN-THIS','REPLICA-SECRET','MODULE-SECRET','UNSAFE','NESTED-SECRET'):
+            self.assertNotIn(secret,json.dumps(snapshot))
+
     def test_api_and_assets_work_without_external_project(self):
         client=logged_in_client(DemoMonitor())
         self.addCleanup(client.application.extensions['accounts'].engine.dispose)
-        for path in ('/','/static/app.css','/static/app.js','/api/cluster'):
+        for path in ('/','/static/app.css','/static/app.js','/static/observatory.css','/api/cluster'):
             with self.subTest(path=path):
                 response=client.get(path)
                 self.assertEqual(response.status_code,200)

@@ -3,14 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#f5f5f0">
+  <meta name="theme-color" content="#0c1424">
   <meta name="csrf-token" content="{{ csrf_token() }}">
   <title>Sentinel Atlas · Cluster observatory</title>
   <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='observatory.css') }}">
   <script src="{{ url_for('static', filename='app.js') }}" defer></script>
 </head>
-<body>
+<body class="dashboard">
+<a class="skip-link" href="#mainContent">Skip to dashboard</a>
 <svg class="svg-library" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
  <symbol id="i-stack" viewBox="0 0 24 24"><path d="m12 3 10 5-10 5L2 8Zm-10 9 10 5 10-5M2 16l10 5 10-5"/></symbol>
  <symbol id="i-network" viewBox="0 0 24 24"><rect x="8" y="2" width="8" height="6" rx="2"/><rect x="2" y="16" width="7" height="6" rx="2"/><rect x="15" y="16" width="7" height="6" rx="2"/><path d="M12 8v4H5v4m7-4h7v4"/></symbol>
@@ -40,36 +42,37 @@
   <div class="product-name">sentinel<span>atlas</span><span class="product-divider">/</span><span class="breadcrumb">Cluster observatory</span></div>
   <div class="topbar-right"><select id="clusterSelect" class="cluster-select" aria-label="Monitored cluster" hidden></select><span class="connection-pill" id="connectionPill"><i class="status-dot"></i><span>Connecting</span></span><a class="account-link" href="{{ url_for('account') }}">{{ g.user.username }}</a>{% if g.user.is_admin %}<a class="account-link" href="{{ url_for('users') }}">Accounts</a>{% endif %}<form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="logout-button">Sign out</button></form></div>
  </header>
- <main>
+ <main id="mainContent">
   <section class="page-heading">
-   <div><div class="eyebrow"><span class="small-line"></span> A WATCHFUL EYE ON YOUR CLUSTER</div><h1>Every node. One clear view<span>.</span></h1><p>From the first heartbeat to the next master. Stay a step ahead.</p></div>
-   <div class="hero-mascot" aria-hidden="true"><img src="{{ url_for('static', filename='owl.svg') }}" alt=""><span>Always on the lookout.</span></div>
+   <div><div class="eyebrow"><span class="small-line"></span> REDIS & SENTINEL OBSERVATORY</div><h1>Your cluster, in focus<span>.</span></h1><p>Follow replication, watch quorum, and inspect every instance.</p></div>
    <div class="heading-actions"><div id="demoControls" class="demo-controls" hidden><label for="demoScenario">Sample data</label><select id="demoScenario"><option value="healthy">Healthy cluster</option><option value="down">Node outage</option><option value="failover">Master promotion</option></select></div><button class="button" id="refreshButton"><svg><use href="#i-refresh"/></svg><span>Refresh</span></button></div>
   </section>
   <div id="notice" class="notice" role="status" hidden></div>
   <section class="summary-grid" aria-label="Cluster summary">
-   <article class="summary-card"><div class="summary-label">CLUSTER HEALTH <svg><use href="#i-shield"/></svg></div><div class="summary-value health-value" id="healthValue">Discovering<span class="dot muted"></span></div><div class="summary-foot" id="healthFoot">Reading your inventory</div></article>
-   <article class="summary-card"><div class="summary-label">REDIS INSTANCES <svg><use href="#i-server"/></svg></div><div class="summary-value"><span id="redisUp">—</span><small id="redisTotal">/ —</small></div><div class="summary-foot" id="redisFoot">Waiting for the first observation</div></article>
-   <article class="summary-card"><div class="summary-label">SENTINEL QUORUM <svg><use href="#i-shield"/></svg></div><div class="summary-value"><span id="quorumReady">—</span><small id="sentinelTotal">/ —</small></div><div class="summary-foot" id="quorumFoot">Checking agreement</div></article>
+   <article class="summary-card health-summary" id="healthCard"><div class="summary-label">CLUSTER HEALTH <svg><use href="#i-shield"/></svg></div><div class="summary-value health-value" id="healthValue">Discovering<span class="dot muted"></span></div><div class="summary-foot" id="healthFoot">Reading your inventory</div></article>
+   <article class="summary-card redis-summary"><div class="summary-label">REDIS INSTANCES <svg><use href="#i-server"/></svg></div><div class="summary-value"><span id="redisUp">—</span><small id="redisTotal">/ —</small></div><div class="summary-foot" id="redisFoot">Waiting for the first observation</div></article>
+   <article class="summary-card sentinel-summary"><div class="summary-label">SENTINEL QUORUM <svg><use href="#i-shield"/></svg></div><div class="summary-value"><span id="quorumReady">—</span><small id="sentinelTotal">/ —</small></div><div class="summary-foot" id="quorumFoot">Checking agreement</div></article>
    <article class="summary-card master-summary"><div class="summary-label">CURRENT MASTER <svg class="gold"><use href="#i-crown"/></svg></div><div class="summary-value mono" id="masterValue">—</div><div class="summary-foot mono" id="masterFoot">No master observed yet</div></article>
   </section>
   <div class="workspace-grid">
    <div class="workspace-main">
     <section class="panel topology-panel" id="topology">
-     <div class="panel-heading"><div><div class="section-eyebrow">LIVE TOPOLOGY</div><h2>One cluster. Every connection.</h2></div><span class="cluster-tag"><i></i><span id="clusterName">redis</span></span></div>
-     <div class="graph-container" id="graphContainer"><svg class="graph-lines" id="graphLines" aria-hidden="true"></svg><div class="graph-nodes" id="graphNodes"></div><div class="graph-empty" id="graphEmpty"><span class="loading-orbit"></span><strong>Looking for your instances</strong><span>The first observation will appear here.</span></div></div>
-     <div class="graph-footer"><div class="legend"><span><i class="legend-line"></i> Replication</span><span><i class="legend-dot amber"></i> Master</span><span><i class="legend-dot green"></i> Online</span><span><i class="legend-dot red"></i> Unavailable</span></div><span id="pollStatus">Polling every 5s</span></div>
+     <div class="panel-heading"><div><div class="section-eyebrow">LIVE TOPOLOGY</div><h2>Replication & Sentinel</h2><p class="panel-description">Select a Redis node to explore its configuration.</p></div><span class="cluster-tag"><i></i><span id="clusterName">redis</span></span></div>
+     <div class="topology-stats" id="topologyStats" aria-label="Live cluster activity"></div>
+     <div class="graph-container" id="graphContainer"><div class="canvas-label">REDIS REPLICATION <span>Data flow →</span></div><svg class="graph-lines" id="graphLines" aria-hidden="true"></svg><div class="graph-nodes" id="graphNodes"></div><div class="graph-empty" id="graphEmpty"><span class="loading-orbit"></span><strong>Waiting for Redis nodes</strong><span>Configured Redis instances will appear here.</span></div></div>
+     <div class="sentinel-network" id="sentinelNetwork" aria-label="Sentinel monitoring"></div>
+     <div class="graph-footer"><div class="legend"><span><i class="legend-dot master-dot"></i> Master</span><span><i class="legend-dot replica-dot"></i> Replica</span><span><i class="legend-dot sentinel-dot"></i> Sentinel</span><span><i class="legend-dot red"></i> Unavailable</span></div><span id="pollStatus">Polling every 5s</span></div>
     </section>
-    <section class="panel fleet-panel" id="fleet"><div class="panel-heading compact"><div><div class="section-eyebrow">THE FLEET</div><h2>Instance overview</h2></div><span class="muted-text" id="fleetCount">— instances</span></div><div class="table-scroll"><table><thead><tr><th>INSTANCE</th><th>ROLE</th><th>MEMORY</th><th>OPS / SEC</th><th>SENTINEL</th></tr></thead><tbody id="fleetBody"><tr><td colspan="5" class="table-empty">Waiting for inventory…</td></tr></tbody></table></div></section>
+    <section class="panel fleet-panel" id="fleet"><div class="panel-heading compact"><div><div class="section-eyebrow">THE FLEET</div><h2>Instance overview</h2></div><span class="muted-text" id="fleetCount">— instances</span></div><div class="table-scroll"><table><thead><tr><th>INSTANCE</th><th>ROLE</th><th>SYNC STATUS</th><th>MEMORY</th><th>OPS / SEC</th><th>SENTINEL</th></tr></thead><tbody id="fleetBody"><tr><td colspan="6" class="table-empty">Waiting for inventory…</td></tr></tbody></table></div></section>
    </div>
-   <aside class="panel inspector" id="inspector" aria-label="Selected instance"><div class="inspector-placeholder"><svg><use href="#i-server"/></svg><h2>A closer look</h2><p>Select an instance to see its hardware, replication, and storage.</p></div></aside>
+   <aside class="panel inspector" id="inspector" aria-label="Selected instance"><div class="inspector-placeholder"><svg><use href="#i-server"/></svg><h2>Inspect an instance</h2><p>Select a node to explore configuration, replication, and storage.</p></div></aside>
   </div>
   <section class="panel logs-panel" id="logs" aria-label="Live service logs">
-   <div class="panel-heading"><div><div class="section-eyebrow">THE WATCHTOWER</div><h2>Every line tells a story.</h2><p class="panel-description">Live Redis and Sentinel logs from your selected instance.</p></div><div class="logs-instance"><label for="logNode">INSTANCE</label><select id="logNode" aria-label="Log instance"><option value="">Waiting for instances</option></select></div></div>
+   <div class="panel-heading"><div><div class="section-eyebrow">SERVICE CONSOLE</div><h2>Live logs</h2><p class="panel-description">Redis and Sentinel output from your selected instance.</p></div><div class="logs-instance"><label for="logNode">INSTANCE</label><select id="logNode" aria-label="Log instance"><option value="">Waiting for instances</option></select></div></div>
    <div class="log-toolbar"><div class="log-service-tabs" role="group" aria-label="Log service"><button data-log-service="redis" class="active" aria-pressed="true">Redis<span>6379</span></button><button data-log-service="sentinel" aria-pressed="false">Sentinel<span>26379</span></button></div><div class="log-actions"><input type="search" id="logFilter" placeholder="Filter log lines…" aria-label="Filter log lines"><button class="button" id="logPause" aria-pressed="false">Pause</button><button class="button" id="logFollow" aria-pressed="true">Following ↓</button></div></div>
    <div class="log-console"><div class="console-title"><span class="console-dots"><i></i><i></i><i></i></span><span class="mono" id="logSource">Waiting for the first observation</span><span class="log-live" id="logStatus">CONNECTING</span></div><div id="logOutput" class="log-output" tabindex="0" role="region" aria-label="Log output"><div class="log-empty">Select an instance to start watching its logs.</div></div><div class="console-footer"><span id="logCount">0 lines</span><span id="logUpdated">Latest 120 lines · refreshes with cluster observations</span></div></div>
   </section>
-  <section class="panel events-panel" id="events"><div class="panel-heading compact"><div><div class="section-eyebrow">ACTIVITY</div><h2>The cluster’s pulse</h2></div><span class="muted-text">This session · latest 60 events</span></div><div id="eventsList" class="events-list"><div class="empty-events">Outages, recoveries, and master promotions will appear here.</div></div></section>
+  <section class="panel events-panel" id="events"><div class="panel-heading compact"><div><div class="section-eyebrow">ACTIVITY</div><h2>Cluster events</h2></div><span class="muted-text">This session · latest 60 events</span></div><div id="eventsList" class="events-list"><div class="empty-events">Outages, recoveries, and master promotions will appear here.</div></div></section>
   <footer class="page-footer"><span><span class="footer-brand">sentinel atlas</span> · Built for a clearer view.</span><span id="lastUpdated">Waiting for the first observation</span></footer>
  </main>
 </div>

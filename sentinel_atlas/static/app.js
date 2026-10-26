@@ -23,7 +23,7 @@ function uptime(seconds) {
   return seconds >= 86400 ? `${Math.floor(seconds/86400)}d ${Math.floor(seconds%86400/3600)}h` : seconds >= 3600 ? `${Math.floor(seconds/3600)}h ${Math.floor(seconds%3600/60)}m` : `${Math.floor(seconds/60)}m`;
 }
 const percent = (used, total) => total > 0 ? Math.max(0, Math.min(100, used / total * 100)) : 0;
-const endpoint = n => `${n.metadata.address || n.name}:${n.metadata.redis_port || '—'}`;
+const endpoint = n => n.metadata.redis_member ? `${n.metadata.address || n.name}:${n.metadata.redis_port || '—'}` : `${n.metadata.sentinel_address || n.metadata.address || n.name}:${n.metadata.sentinel_port || '—'}`;
 const online = n => n.metadata.redis_member ? !!n.redis.up : !!n.sentinel.up;
 const role = n => !online(n) ? 'down' : n.metadata.redis_member ? ['master','replica'].includes(n.redis.role) ? n.redis.role : 'unknown' : 'sentinel';
 const badge = n => `<span class="role-badge ${role(n)}">${role(n) === 'down' ? 'unavailable' : esc(role(n))}</span>`;
@@ -32,7 +32,7 @@ function meter(label, value, total) {
   const p = percent(value,total);
   return `<div class="metric-label"><span>${esc(label)}</span><strong>${bytes(value)} / ${bytes(total)}</strong></div><div class="meter"><span class="${p>90?'danger':p>75?'warn':''}" style="width:${p}%"></span></div>`;
 }
-let state = null, selected = null, selectedTab = 'overview', scenario = 'healthy', activeCluster='', lastRender = null, serverConnected = false;
+let state = null, selected = null, selectedTab = 'overview', configFilter = '', scenario = 'healthy', activeCluster='', lastRender = null, serverConnected = false;
 
 async function apiFetch(url, options) {
   const response=await fetch(url,options);
@@ -50,6 +50,7 @@ function render(data) {
   const master = data.nodes.find(n => n.name === data.master);
   $('demoControls').hidden = data.mode !== 'demo';
   const health = {healthy:'Healthy', degraded:'Degraded', offline:'Offline', loading:'Discovering'}[data.status] || 'Unknown';
+  $('healthCard').dataset.status = data.status;
   $('healthValue').innerHTML = `${health}<span class="dot ${data.status==='healthy'?'':data.status==='loading'?'muted':data.status==='degraded'?'amber':'red'}"></span>`;
   $('healthFoot').textContent = data.status==='healthy' ? 'All instances reporting normally' : data.status==='loading' ? 'Reading inventory and connecting' : data.master_count>1 ? 'Multiple masters observed' : !data.master ? 'No current master observed' : 'Some instances need attention';
   $('redisUp').textContent = s.redis_up;
@@ -68,6 +69,7 @@ function render(data) {
   $('notice').textContent = notice;
   $('notice').hidden = !notice;
   renderGraph();
+  renderSentinels();
   renderFleet();
   renderInspector();
   renderEvents();
@@ -75,51 +77,101 @@ function render(data) {
   updateTime();
 }
 
+function syncView(node) {
+  const sync=node.replication||{}, r=node.redis;
+  const titles={master:'Master',in_sync:'In sync',catching_up:'Catching up',syncing:'Full sync',loading:'Loading dataset',link_down:'Link down',unavailable:'Unavailable',unknown:'Sync unknown',not_applicable:'Sentinel only'};
+  const key=sync.state||'unknown';
+  const tone=['in_sync','master'].includes(key)?'ready':['link_down','unavailable'].includes(key)?'error':['syncing','loading','catching_up'].includes(key)?'warning':'muted';
+  const progress=sync.progress_percent;
+  let description=key==='master'?`${fmt(r.connected_replicas)} replicas connected`:key==='not_applicable'?'No Redis replication':key==='unavailable'?'Waiting for Redis':key==='link_down'?'Upstream disconnected':'Offset comparison unavailable';
+  if (sync.lag_bytes!=null) description=`${bytes(sync.lag_bytes)} sampled gap`;
+  if (key==='syncing') description=progress!=null?`${progress.toFixed(1)}% transferred`:r.sync_read_bytes!=null?`${bytes(r.sync_read_bytes)} received · size unknown`:'Waiting for transfer size';
+  if (key==='loading') description=progress!=null?`${progress.toFixed(1)}% loaded`:'Loading the dataset';
+  return {key,title:titles[key]||titles.unknown,tone,description,progress};
+}
+
+function syncBadge(node) {
+  const view=syncView(node);
+  return `<span class="sync-badge ${view.tone}"><i></i>${view.title}</span>`;
+}
+
+function replicationDetails(node) {
+  const view=syncView(node), sync=node.replication||{}, r=node.redis;
+  const offset=value=>value!=null?fmt(value):'—';
+  return `<div class="inspector-section replication-details"><div class="detail-label">LIVE REPLICATION</div><div class="sync-overview">${syncBadge(node)}<span>${esc(view.description)}</span></div>${view.progress!=null?`<div class="sync-progress" role="progressbar" aria-label="${view.key==='loading'?'Dataset loading':'Full sync transfer'}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${view.progress}"><span style="width:${view.progress}%"></span></div>`:''}${detail('Processed offset',r.up?offset(r.replication_offset):'—',true)}${r.role==='replica'?`${detail('Upstream',sync.upstream_name||r.upstream,true)}${detail('Upstream offset',offset(sync.upstream_offset),true)}${detail('Sampled byte gap',sync.lag_bytes!=null?bytes(sync.lag_bytes):'—',true)}${detail('Master link',r.up?r.link:'—')}${detail('Last upstream I/O',r.up&&r.last_master_io!=null&&r.last_master_io>=0?`${fmt(r.last_master_io)}s ago`:'—')}${view.key==='link_down'?detail('Link down for',r.link_down_seconds!=null&&r.link_down_seconds>=0?`${fmt(r.link_down_seconds)}s`:'—'):''}`:''}<p class="muted-text">Updates every ${state.poll_interval||5}s. Offset gaps compare independent samples of the same replication stream; they are approximate under load.</p></div>`;
+}
+
 function renderGraph() {
   if (!state) return;
-  const nodes = state.nodes, container = $('graphContainer');
+  const nodes = state.nodes.filter(n => n.metadata.redis_member), container = $('graphContainer');
+  const focused = $('graphNodes').contains(document.activeElement) ? document.activeElement.dataset.node : null;
+  const s = state.summary;
+  $('topologyStats').innerHTML = `<span>${icon('server')}<strong>${fmt(s.redis_up)} / ${fmt(s.redis_total)}</strong> Redis online</span><span>${icon('chart')}<strong>${fmt(s.ops)}</strong> ops / sec</span><span>${icon('stack')}<strong>${bytes(s.memory)}</strong> memory</span>`;
   $('graphEmpty').hidden = nodes.length > 0;
-  if (!nodes.length) { $('graphNodes').innerHTML=''; $('graphLines').innerHTML=''; return; }
-  const w = container.clientWidth;
-  const cardWidth = w < 470 ? Math.min(235,w-28) : w < 700 ? 205 : 235;
-  const columns = Math.max(1, Math.min(3, Math.floor((w-32)/(cardWidth+28))));
+  if (!nodes.length) { $('graphNodes').innerHTML=''; $('graphLines').innerHTML=''; container.style.height='230px'; return; }
+  const w = container.clientWidth, gap = 24, cardHeight = 236;
+  const cardWidth = Math.max(150, Math.min(w < 570 ? 224 : 240, w-40));
+  const columns = Math.max(1, Math.min(3, Math.floor((w-40+gap)/(cardWidth+gap))));
   const masters = nodes.filter(n => n.redis.up && n.redis.role==='master');
   const rest = nodes.filter(n => !masters.includes(n));
   const positions = new Map();
   function row(items, y) {
-    items.forEach((node,i) => positions.set(node.name, {x: (w - items.length*cardWidth - (items.length-1)*28)/2+i*(cardWidth+28), y}));
+    items.forEach((node,i) => positions.set(node.name, {x:(w-items.length*cardWidth-(items.length-1)*gap)/2+i*(cardWidth+gap), y}));
   }
-  let nextY=36;
-  if (masters.length) {
-    for (let i=0;i<masters.length;i+=columns) {row(masters.slice(i,i+columns),nextY);nextY+=202;}
-  } else nextY=45;
-  for (let i=0;i<rest.length;i+=columns) {row(rest.slice(i,i+columns),nextY);nextY+=196;}
-  const height=Math.max(415,nextY+6);
+  let nextY=62;
+  for (const group of [masters,rest]) {
+    for (let i=0;i<group.length;i+=columns) {row(group.slice(i,i+columns),nextY);nextY+=cardHeight+86;}
+  }
+  const height=nextY-50;
   container.style.height=`${height}px`;
   $('graphLines').setAttribute('viewBox',`0 0 ${w} ${height}`);
   $('graphNodes').innerHTML = nodes.map(node => {
     const p=positions.get(node.name), r=node.redis, active=online(node), isMaster=role(node)==='master';
-    return `<button class="node-card ${isMaster?'master':''} ${active?'':'unavailable'} ${node.name===selected?'selected':''}" data-node="${esc(node.name)}" style="left:${p.x}px;top:${p.y}px;width:${cardWidth}px" aria-label="Inspect ${esc(node.name)}, ${role(node)}" aria-pressed="${node.name===selected}">
-      <div class="node-top"><span class="node-name">${icon(isMaster?'crown':'server')}${esc(node.name)}</span>${badge(node)}</div>
+    const status=!active?'Unavailable':r.loading?'Loading dataset':isMaster?'Accepting writes':r.syncing?'Synchronizing':r.link==='up'?'Replication connected':'Replication link down';
+    const sync=syncView(node);
+    const problem=['error','warning'].includes(sync.tone);
+    return `<button class="node-card ${role(node)} ${node.name===selected?'selected':''}" data-node="${esc(node.name)}" style="left:${p.x}px;top:${p.y}px;width:${cardWidth}px" aria-label="Inspect ${esc(node.name)}, ${role(node)}" aria-pressed="${node.name===selected}">
+      <div class="node-kicker">${icon(isMaster?'crown':'server')} REDIS INSTANCE <span>${node.name===selected?'SELECTED':'INSPECT ↗'}</span></div>
+      <div class="node-top"><span class="node-name">${esc(node.name)}</span>${badge(node)}</div>
       <div class="node-address">${esc(endpoint(node))}</div>
       <div class="node-stats"><span>MEMORY<strong>${r.up?bytes(r.memory_used):'—'}</strong></span><span>OPS / SEC<strong>${r.up?fmt(r.ops_per_second):'—'}</strong></span><span>CLIENTS<strong>${r.up?fmt(r.clients):'—'}</strong></span></div>
-      <div class="node-footer"><span><i class="dot ${active?'':'red'}"></i>${active ? isMaster?'Accepting writes':r.syncing?'Synchronizing':r.link==='up'?'Replication connected':'Online' : node.reachable?'Redis unavailable':'Server unreachable'}</span><span class="node-sentinel">${icon('shield')}${node.metadata.sentinel_member?(node.sentinel.up?'Sentinel online':'Sentinel unavailable'):'Standalone'}</span></div>
+      <div class="node-sync"><div>${syncBadge(node)}<span class="node-sync-value" title="${esc(sync.description)}">${esc(sync.description)}</span></div>${sync.progress!=null?`<div class="sync-progress" role="progressbar" aria-label="${sync.key==='loading'?'Dataset loading':'Full sync transfer'}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${sync.progress}"><span style="width:${sync.progress}%"></span></div>`:''}</div>
+      <div class="node-footer ${problem?'attention':''}"><span><i class="dot ${!active?'red':problem?'amber':''}"></i>${status}</span>${node.metadata.sentinel_member?`<span class="node-sentinel ${node.sentinel.up?'':'attention'}" title="${node.sentinel.up?'Sentinel online':'Sentinel unavailable'}">${icon('shield')}</span>`:''}</div>
     </button>`;
   }).join('');
-  let lines='<defs><marker id="arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0 0 6 3 0 6" fill="#a9c7b6" stroke="none"/></marker></defs>';
+  if (focused) [...$('graphNodes').children].find(n => n.dataset.node === focused)?.focus({preventScroll:true});
+  let lines='<defs><marker id="arrowhead" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0 7 3.5 0 7" class="arrow-fill"/></marker><marker id="arrowhead-down" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0 7 3.5 0 7" class="arrow-fill down"/></marker></defs>';
   nodes.forEach((node,index) => {
-    let upstream=nodes.find(other => (other.metadata.replication_address||other.metadata.address)===node.redis.upstream && Number(other.metadata.replication_port||other.metadata.redis_port)===Number(node.redis.upstream_port));
-    if (!upstream && !node.redis.up && masters.length===1 && node!==masters[0]) upstream=masters[0];
+    const upstream=nodes.find(other => (other.metadata.replication_address||other.metadata.address)===node.redis.upstream && Number(other.metadata.replication_port||other.metadata.redis_port)===Number(node.redis.upstream_port));
+    // Only draw observed relationships; an unreachable node's upstream is unknown.
     if (!upstream || upstream===node) return;
-    const from=positions.get(upstream.name),to=positions.get(node.name),connected=node.redis.up&&node.redis.link==='up'&&!node.redis.syncing&&upstream.redis.up;
-    const x1=from.x+cardWidth/2,y1=from.y+145,x2=to.x+cardWidth/2,y2=to.y-7;
-    const mid=(y1+y2)/2;
+    const from=positions.get(upstream.name),to=positions.get(node.name),connected=node.redis.up&&node.redis.link==='up'&&!node.redis.syncing&&!node.redis.loading&&upstream.redis.up;
+    const sameRow=from.y===to.y;
+    const x1=from.x+cardWidth/2,y1=from.y+cardHeight+2,x2=to.x+cardWidth/2,y2=sameRow?to.y+cardHeight+2:to.y-8;
+    const mid=sameRow?y1+36:(y1+y2)/2;
     const path=`M${x1},${y1} C${x1},${mid} ${x2},${mid} ${x2},${y2}`;
-    lines+=`<path id="edge-${index}" d="${path}" class="edge ${connected?'':'down'}" marker-end="url(#arrowhead)"/>`;
-    if (connected) lines+=`<circle class="flow-particle" r="2.7"><animateMotion dur="3s" begin="-${index}s" repeatCount="indefinite" path="${path}"/></circle>`;
-    if (y2>y1) lines+=`<rect x="${(x1+x2)/2-43}" y="${mid-6}" width="86" height="13" rx="3" fill="#fcfdf9" stroke="none"/><text x="${(x1+x2)/2}" y="${mid+3}" text-anchor="middle" class="edge-label ${connected?'':'down'}">${connected?'REPLICATING':'LINK UNAVAILABLE'}</text>`;
+    const related=selected===node.name||selected===upstream.name;
+    lines+=`<path d="${path}" class="edge ${connected?'':'down'} ${related?'related':''}" marker-end="url(#${connected?'arrowhead':'arrowhead-down'})"/>`;
+    if (connected) lines+=`<circle class="flow-particle" r="3"><animateMotion dur="3s" begin="-${index}s" repeatCount="indefinite" path="${path}"/></circle>`;
+    if (!sameRow && y2>y1) lines+=`<rect x="${(x1+x2)/2-55}" y="${mid-9}" width="110" height="18" rx="9" class="edge-label-bg"/><text x="${(x1+x2)/2}" y="${mid+3}" text-anchor="middle" class="edge-label ${connected?'':'down'}">${connected?'REPLICATING':node.redis.syncing?'SYNCING':'LINK DOWN'}</text>`;
   });
   $('graphLines').innerHTML=lines;
+}
+
+function renderSentinels() {
+  const watchers=state.nodes.filter(n => n.metadata.sentinel_member);
+  const focused=$('sentinelNetwork').contains(document.activeElement) ? document.activeElement.dataset.node : null;
+  const master=state.nodes.find(n => n.name===state.master);
+  const address=master?.metadata.replication_address||master?.metadata.address;
+  const port=Number(master?.metadata.replication_port||master?.metadata.redis_port);
+  const status=!watchers.length?'Not configured':state.summary.consensus?'Consensus reached':'Needs attention';
+  $('sentinelNetwork').innerHTML=`<div class="sentinel-heading"><div>${icon('shield')}<span>SENTINEL WATCH</span><small>${watchers.length} monitor${watchers.length===1?'':'s'}</small></div><span class="consensus-badge ${state.summary.consensus?'ready':watchers.length?'warning':''}">${state.summary.consensus?icon('shield'):''}${status}</span></div>${watchers.length?`<div class="sentinel-grid">${watchers.map(node=>{
+    const s=node.sentinel;
+    const agrees=s.up&&s.quorum_ok&&!!master&&s.master_ip===address&&Number(s.master_port)===port&&s.flags==='master';
+    const label=!s.up?'Unavailable':!s.quorum_ok?'No quorum':!master?'Master unconfirmed':!agrees?'Master view differs':'Quorum ready';
+    return `<button class="sentinel-card ${!s.up?'down':agrees?'ready':'warning'} ${node.name===selected?'selected':''}" data-node="${esc(node.name)}" data-inspect-tab="sentinel" aria-label="Inspect Sentinel on ${esc(node.name)}, ${label}" aria-pressed="${node.name===selected}"><div class="sentinel-card-top">${icon('shield')}<strong>${esc(node.name)}</strong><i class="dot ${!s.up?'red':agrees?'':'amber'}"></i></div><div class="sentinel-address mono">${esc(node.metadata.sentinel_address||node.metadata.address)}:${esc(node.metadata.sentinel_port)}</div><span class="sentinel-state">${label}</span><div class="sentinel-master"><span>MASTER VIEW</span><strong class="mono">${s.up?esc(`${s.master_ip}:${s.master_port}`):'—'}</strong></div><div class="sentinel-facts"><span>Quorum <strong>${s.up?esc(s.required_quorum):'—'}</strong></span><span>Peers <strong>${s.up?esc(s.other_sentinels):'—'}</strong></span></div></button>`;
+  }).join('')}</div>`:'<p class="muted-text">This cluster is monitored through Redis. Add Sentinel targets to see quorum and master agreement here.</p>'}`;
+  if (focused) [...$('sentinelNetwork').querySelectorAll('[data-node]')].find(n => n.dataset.node===focused)?.focus({preventScroll:true});
 }
 
 function sparkline(history) {
@@ -131,7 +183,7 @@ function sparkline(history) {
 }
 
 function renderFleet() {
-  $('fleetBody').innerHTML=state.nodes.length?state.nodes.map(node=>`<tr tabindex="0" data-node="${esc(node.name)}" class="${node.name===selected?'selected':''}" aria-label="Inspect ${esc(node.name)}"><td><span class="instance-cell"><i class="dot ${online(node)?'':'red'}"></i><span>${esc(node.name)}<small class="mono">${esc(node.metadata.address)}</small></span></span></td><td>${badge(node)}</td><td><span class="memory-cell mono">${node.redis.up?bytes(node.redis.memory_used):'—'}</span></td><td><span class="memory-cell mono">${node.redis.up?fmt(node.redis.ops_per_second):'—'}${sparkline(node.history)}</span></td><td><span class="sentinel-cell">${icon('shield')}${!node.metadata.sentinel_member?'Not configured':node.sentinel.up ? node.sentinel.quorum_ok?'Quorum ready':'No quorum':'Unavailable'}</span></td></tr>`).join(''):'<tr><td colspan="5" class="table-empty">Waiting for inventory…</td></tr>';
+  $('fleetBody').innerHTML=state.nodes.length?state.nodes.map(node=>`<tr tabindex="0" data-node="${esc(node.name)}" class="${node.name===selected?'selected':''}" aria-label="Inspect ${esc(node.name)}"><td><span class="instance-cell"><i class="dot ${online(node)?'':'red'}"></i><span>${esc(node.name)}<small class="mono">${esc(node.metadata.address)}</small></span></span></td><td>${badge(node)}</td><td class="sync-cell">${syncBadge(node)}<small>${esc(syncView(node).description)}</small></td><td><span class="memory-cell mono">${node.redis.up?bytes(node.redis.memory_used):'—'}</span></td><td><span class="memory-cell mono">${node.redis.up?fmt(node.redis.ops_per_second):'—'}${sparkline(node.history)}</span></td><td><span class="sentinel-cell">${icon('shield')}${!node.metadata.sentinel_member?'Not configured':node.sentinel.up ? node.sentinel.quorum_ok?'Quorum ready':'No quorum':'Unavailable'}</span></td></tr>`).join(''):'<tr><td colspan="6" class="table-empty">Waiting for inventory…</td></tr>';
 }
 
 function environmentDetails(node) {
@@ -140,20 +192,65 @@ function environmentDetails(node) {
   return `<div class="inspector-section"><div class="detail-label">${deployment==='nspawn'?'SERVER & CONTAINER':'SERVER'}${node.stale?' · LAST OBSERVATION':''}</div>${detail('Hostname',hw.hostname)}${detail('Operating system',hw.os)}${detail('Architecture',hw.architecture,true)}${detail('CPU cores / load',hw.cpu_cores?`${hw.cpu_cores} cores · ${Number(hw.load_1m).toFixed(2)} load`:'—')}${detail('CPU utilization',hw.cpu_percent!=null&&!node.stale?`${hw.cpu_percent}%`:'Awaiting samples')}${detail('Service state',node.stale?'Unknown':c.state)}${meter('Server memory',hw.memory_used,hw.memory_total)}${deployment==='nspawn'?meter('Container memory',c.memory_current,c.memory_limit):''}</div>`;
 }
 
+function configurationDetails(node) {
+  if (!node.metadata.redis_member) return '<p class="muted-text">This instance only runs Sentinel.</p>';
+  if (!node.redis.up || node.stale) return '<p class="muted-text">Configuration is unavailable while Redis is unreachable.</p>';
+  if (node.redis.config_status !== 'ok') return '<p class="muted-text">Unable to read configuration. The monitoring account needs permission to run CONFIG GET.</p>';
+  return `<div class="configuration-panel"><div class="detail-label">RUNTIME CONFIGURATION</div><p class="muted-text">Settings reported by this Redis node. Credential values are hidden.</p><label class="config-search-label" for="configSearch">Search settings</label><input id="configSearch" class="config-search" type="search" placeholder="Filter by setting or value…" value="${esc(configFilter)}" autocomplete="off"><p id="configCount" class="muted-text" role="status"></p><div id="configRows" class="config-rows"></div></div>`;
+}
+
+function renderConfigurationRows() {
+  if (!$('configRows')) return;
+  const entries = Object.entries(state.nodes.find(n => n.name === selected)?.redis.configuration || {}).sort(([a], [b]) => a.localeCompare(b));
+  const query = configFilter.trim().toLowerCase();
+  const matches = entries.filter(([key, value]) => `${key} ${value}`.toLowerCase().includes(query));
+  $('configCount').textContent = `${matches.length} of ${entries.length} settings`;
+  $('configRows').innerHTML = matches.length ? matches.map(([key, value]) => detail(key, value === '' ? '(empty)' : value, true)).join('') : '<p class="muted-text">No settings match your search.</p>';
+}
+
+function sentinelDetails(node) {
+  const s=node.sentinel;
+  const status=node.stale?'Server unreachable':!s.up?'Sentinel unavailable':!s.quorum_ok?'Sentinel online · quorum unavailable':'Sentinel online · quorum available';
+  return `<div class="inspector-section"><div class="inspector-status ${!s.up||!s.quorum_ok||node.stale?'error':''}">${icon('shield')}${status}</div><div class="detail-label">SENTINEL MONITOR</div>${detail('Monitored cluster',node.metadata.cluster)}${detail('Required quorum',s.up?s.required_quorum:'—')}${detail('Known Sentinel peers',s.up?s.other_sentinels:'—')}${detail('Known replicas',s.up?s.known_replicas:'—')}<div class="detail-rule"></div><div class="detail-label">REPORTED MASTER</div>${detail('Endpoint',s.up?`${s.master_ip}:${s.master_port}`:'—',true)}${detail('Flags',s.up?s.flags:'—',true)}<p class="muted-text">Each Sentinel reports its own master view. Compare the monitor cards to spot disagreement.</p></div>`;
+}
+
 function renderInspector() {
+  const focusedTab = document.activeElement?.dataset.tab;
+  const searchFocused = document.activeElement?.id === 'configSearch';
+  const searchPosition = searchFocused ? document.activeElement.selectionStart : null;
+  const searchEnd = searchFocused ? document.activeElement.selectionEnd : null;
+  const configScroll = $('inspector').dataset.node === selected ? $('configRows')?.scrollTop || 0 : 0;
   const node=state.nodes.find(n=>n.name===selected);
-  if (!node) return;
+  if (!node) {
+    $('inspector').innerHTML=`<div class="inspector-placeholder">${icon('server')}<h2>Inspect an instance</h2><p>Select a node to explore its configuration and monitoring details.</p></div>`;
+    delete $('inspector').dataset.node;
+    return;
+  }
   const r=node.redis, hw=node.hardware, sentinel=node.sentinel, c=node.container;
+  const inspectorEndpoint=selectedTab==='sentinel'?`${node.metadata.sentinel_address||node.metadata.address}:${node.metadata.sentinel_port}`:endpoint(node);
   let content='';
-  const reason = node.stale ? `Server unreachable · last seen ${age(node.last_seen)}` : !r.up ? r.error==='authentication_failed'?'Redis authentication failed':r.error==='timeout'?'Redis query timed out':'Redis is unavailable' : r.role==='master'?'Current master · accepting writes':r.link==='up'&&!r.syncing?'Replica connected and synchronized':r.syncing?'Replica is synchronizing':'Replication link is down';
+  const reason = !node.metadata.redis_member ? !sentinel.up?'Sentinel is unavailable':sentinel.quorum_ok?'Sentinel online · quorum available':'Sentinel online · no quorum' : node.stale ? `Server unreachable · last seen ${age(node.last_seen)}` : !r.up ? r.error==='authentication_failed'?'Redis authentication failed':r.error==='timeout'?'Redis query timed out':'Redis is unavailable' : r.role==='master'?'Current master · accepting writes':`${syncView(node).title} · ${syncView(node).description}`;
   if (selectedTab==='overview') {
-    content=`<div class="inspector-section"><div class="inspector-status ${!r.up||node.stale?'error':''}">${icon(r.up?'shield':'info')}${esc(reason)}</div><div class="detail-label">REDIS PROCESS</div>${detail('Version',r.version)}${detail('Uptime',r.up?uptime(r.uptime_seconds):'—')}${detail('Replication offset',r.up?fmt(r.replication_offset):'—',true)}${detail(r.role==='master'?'Connected replicas':'Upstream',r.role==='master'?fmt(r.connected_replicas):r.upstream?`${r.upstream}:${r.upstream_port}`:'—',true)}${detail('Append-only file',r.up?r.aof_enabled?'Enabled':'Disabled':'—')}${detail('RDB / AOF status',r.up?`${r.rdb_status||'unknown'} / ${r.aof_status||'unknown'}`:'—')}${meter('Redis memory',r.up?r.memory_used:null,r.up?r.memory_max:null)}</div>
+    content=`<div class="inspector-section"><div class="inspector-status ${!online(node)||node.stale?'error':''}">${icon(online(node)?'shield':'info')}${esc(reason)}</div>${node.metadata.redis_member?`<div class="detail-label">REDIS PROCESS</div>${detail('Version',r.version)}${detail('Uptime',r.up?uptime(r.uptime_seconds):'—')}${detail(r.role==='master'?'Connected replicas':'Upstream',r.role==='master'?fmt(r.connected_replicas):r.upstream?`${r.upstream}:${r.upstream_port}`:'—',true)}${detail('Append-only file',r.up?r.aof_enabled?'Enabled':'Disabled':'—')}${detail('RDB / AOF status',r.up?`${r.rdb_status||'unknown'} / ${r.aof_status||'unknown'}`:'—')}${meter('Redis memory',r.up?r.memory_used:null,r.up?r.memory_max:null)}`:''}</div>
+      ${node.metadata.redis_member?replicationDetails(node):''}
       ${environmentDetails(node)}
       ${node.metadata.sentinel_member ? `<div class="inspector-section"><div class="detail-label">SENTINEL</div>${detail("Endpoint",`${node.metadata.sentinel_address || node.metadata.address}:${node.metadata.sentinel_port}`,true)}${detail("Quorum",sentinel.up?sentinel.quorum_ok?"Available":"Unavailable":"Unknown")}${detail("Required quorum",sentinel.up?sentinel.required_quorum:"—")}${detail("Known peers",sentinel.up?sentinel.other_sentinels:"—")}${detail("Master view",sentinel.up?`${sentinel.master_ip}:${sentinel.master_port}`:"—",true)}</div>` : `<div class="inspector-section"><div class="detail-label">TOPOLOGY</div><p class="muted-text">Redis monitoring without Sentinel.</p></div>`}`;
+  } else if (selectedTab==='sentinel') {
+    content=sentinelDetails(node);
+  } else if (selectedTab==='configuration') {
+    content=configurationDetails(node);
   } else {
     content=(node.stale?`<div class="inspector-status error">${icon('info')}Last observation · ${age(node.last_seen)}</div>`:'')+(node.storage.length?node.storage.map(item=>`<div class="storage-item"><div class="storage-name">${esc(item.label)}<span class="mount-state ${item.mounted?'':'bad'}">${item.mounted?'MOUNTED':node.stale?'NOT OBSERVED':'NOT MOUNTED'}</span></div>${meter('Space used',item.used,item.total)}<div class="path-label">SERVER PATH</div><div class="path-value">${esc(item.host_path)}</div>${node.metadata.deployment==='host'?'':`<div class="path-label">INSIDE CONTAINER</div><div class="path-value">${esc(item.container_path)}</div>`}${item.available!=null?`<div class="storage-source">${bytes(item.available)} available · ${esc(item.filesystem||'unknown filesystem')}</div>`:''}${item.source?`<div class="storage-source mono">${esc(item.source)}</div>`:''}</div>`).join(''):'<p class="muted-text">No storage information available yet.</p>')+`<div class="storage-item"><div class="storage-name">Runtime paths</div><div class="path-label">REDIS LOG FILE</div><div class="path-value">${esc(r.logfile||'Not observed')}</div><div class="path-label">REDIS CONFIGURATION</div><div class="path-value">${esc(r.config_file||'Not observed')}</div></div>`;
   }
-  $('inspector').innerHTML=`<div class="inspector-head"><div class="section-eyebrow">INSTANCE INSPECTOR</div><div class="inspector-title"><h2>${role(node)==='master'?icon('crown'):''}${esc(node.name)}</h2>${badge(node)}</div><div class="inspector-endpoint"><span>${esc(endpoint(node))}</span><button class="copy-button" data-copy="${esc(endpoint(node))}" title="Copy endpoint" aria-label="Copy endpoint">${icon('copy')}</button></div></div><div class="inspector-tabs"><button data-tab="overview" class="${selectedTab==='overview'?'active':''}" aria-pressed="${selectedTab==='overview'}">Overview</button><button data-tab="storage" class="${selectedTab==='storage'?'active':''}" aria-pressed="${selectedTab==='storage'}">Storage & paths</button></div><div class="inspector-content ${selectedTab==='storage'?'storage-content':''}">${content}</div>`;
+  $('inspector').innerHTML=`<div class="inspector-head"><div class="section-eyebrow">INSTANCE INSPECTOR</div><div class="inspector-title"><h2>${selectedTab==='sentinel'?icon('shield'):role(node)==='master'?icon('crown'):''}${esc(node.name)}</h2>${selectedTab==='sentinel'?'<span class="role-badge sentinel">Sentinel</span>':badge(node)}</div><div class="inspector-endpoint"><span>${esc(inspectorEndpoint)}</span><button class="copy-button" data-copy="${esc(inspectorEndpoint)}" title="Copy endpoint" aria-label="Copy endpoint">${icon('copy')}</button></div></div><div class="inspector-tabs"><button data-tab="overview" class="${selectedTab==='overview'?'active':''}" aria-pressed="${selectedTab==='overview'}">Overview</button>${node.metadata.redis_member?`<button data-tab="configuration" class="${selectedTab==='configuration'?'active':''}" aria-pressed="${selectedTab==='configuration'}">Configuration</button>`:''}${node.metadata.sentinel_member?`<button data-tab="sentinel" class="${selectedTab==='sentinel'?'active':''}" aria-pressed="${selectedTab==='sentinel'}">Sentinel</button>`:''}<button data-tab="storage" class="${selectedTab==='storage'?'active':''}" aria-pressed="${selectedTab==='storage'}">Storage & paths</button></div><div class="inspector-content ${selectedTab==='storage'?'storage-content':selectedTab==='configuration'?'configuration-content':''}">${content}</div>`;
+  renderConfigurationRows();
+  $('inspector').dataset.node = selected;
+  if ($('configRows')) $('configRows').scrollTop = configScroll;
+  if (focusedTab) [...$('inspector').querySelectorAll('[data-tab]')].find(tab=>tab.dataset.tab===focusedTab)?.focus({preventScroll:true});
+  if (searchFocused && $('configSearch')) {
+    $('configSearch').focus({preventScroll:true});
+    $('configSearch').setSelectionRange(searchPosition, searchEnd);
+  }
 }
 
 function renderEvents() {
@@ -192,7 +289,9 @@ async function fetchSnapshot() {
 
 document.addEventListener('click',async event=>{
   const node=event.target.closest('[data-node]');
-  if (node) {selected=node.dataset.node;renderGraph();renderFleet();renderInspector();syncLogControls();}
+  if (node) {selected=node.dataset.node;configFilter='';selectedTab=node.dataset.inspectTab || (state.nodes.find(n=>n.name===selected)?.metadata.redis_member?'configuration':'overview');renderGraph();renderSentinels();renderFleet();renderInspector();syncLogControls();
+    if (window.matchMedia('(max-width: 1000px)').matches) $('inspector').scrollIntoView({behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});
+  }
   const tab=event.target.closest('[data-tab]');
   if (tab) {selectedTab=tab.dataset.tab;renderInspector();}
   const service=event.target.closest('[data-log-service]');
@@ -200,6 +299,7 @@ document.addEventListener('click',async event=>{
   const copy=event.target.closest('[data-copy]');
   if (copy) {try {await navigator.clipboard.writeText(copy.dataset.copy);copy.title='Copied';copy.setAttribute('aria-label','Endpoint copied');} catch {copy.title='Clipboard unavailable';}}
 });
+document.addEventListener('input',event=>{if(event.target.id==='configSearch'){configFilter=event.target.value;renderConfigurationRows();}});
 document.addEventListener('keydown',event=>{if((event.key==='Enter'||event.key===' ')&&event.target.matches('tr[data-node]')){event.preventDefault();event.target.click();}});
 $('refreshButton').addEventListener('click',async()=>{
   const button=$('refreshButton');button.disabled=true;
@@ -286,7 +386,7 @@ function renderLogs() {
   output.scrollTop=logFollowing?output.scrollHeight:scroll;
 }
 $('logNode').addEventListener('change',event=>{
-  selected=event.target.value;renderGraph();renderFleet();renderInspector();syncLogControls();
+  selected=event.target.value;renderGraph();renderSentinels();renderFleet();renderInspector();syncLogControls();
 });
 $('logFilter').addEventListener('input',renderLogs);
 $('logPause').addEventListener('click',()=>{

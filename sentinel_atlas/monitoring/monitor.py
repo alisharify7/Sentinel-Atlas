@@ -9,6 +9,7 @@ import threading
 import time
 
 from .public_schema import clean_record
+from .replication import replication_status
 from ..settings import Settings
 
 from ..paths import PROBE_DIR
@@ -122,6 +123,8 @@ class ClusterState:
             clusters = sorted({node['metadata'].get('cluster', 'redis') for node in nodes})
             selected_cluster = cluster if cluster in clusters else clusters[0] if clusters else None
             nodes = [node for node in nodes if node['metadata'].get('cluster', 'redis') == selected_cluster]
+            for node in nodes:
+                node['replication'] = replication_status(node, nodes)
             redis_nodes = [node for node in nodes if node['metadata'].get('redis_member')]
             sentinel_nodes = [node for node in nodes if node['metadata'].get('sentinel_member')]
             masters = [node for node in redis_nodes if node['redis'].get('up') and node['redis'].get('role') == 'master']
@@ -142,6 +145,7 @@ class ClusterState:
                 and node['sentinel'].get('flags') == 'master' for node in sentinel_nodes)
             healthy = bool(redis_nodes and master and redis_up == len(redis_nodes)
                            and len(replicas) == len(redis_nodes) - 1 and in_sync
+                           and not any(node['redis'].get('loading') for node in redis_nodes)
                            and (consensus or not sentinel_nodes) and not self.error)
             status = 'loading' if self.updated_at is None else 'healthy' if healthy else 'offline' if not redis_up else 'degraded'
             return {'mode': self.mode, 'status': status, 'updated_at': self.updated_at,

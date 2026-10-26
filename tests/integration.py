@@ -127,8 +127,29 @@ try:
                 assert snapshot['master']=='primary'
                 assert snapshot['summary']['replicas']==1 and snapshot['summary']['consensus']
                 assert password not in json.dumps(snapshot)
+                primary_client = monitor.targets[0][1]['redis']
+                replica_client = monitor.targets[1][1]['redis']
+                before = next(n['redis']['replication_offset'] for n in snapshot['nodes'] if n['name']=='primary')
+                with primary_client.pipeline(transaction=False) as workload:
+                    for index in range(1000):
+                        workload.set(f'atlas-sync-test:{index}', 'x'*1024)
+                    workload.execute()
+                def caught_up():
+                    monitor.poll_once()
+                    return next(n['replication']['state'] for n in monitor.snapshot()['nodes'] if n['name']=='replica')=='in_sync'
+                wait_ready(caught_up)
+                snapshot = monitor.snapshot()
+                replica_node = next(n for n in snapshot['nodes'] if n['name']=='replica')
+                assert replica_node['redis']['replication_offset'] > before
+                assert replica_node['replication']['lag_bytes'] == 0
+                assert replica_client.get('atlas-sync-test:999') == 'x'*1024
+                replica_client.replicaof('127.0.0.1', 1)
+                def disconnected():
+                    monitor.poll_once()
+                    return next(n['replication']['state'] for n in monitor.snapshot()['nodes'] if n['name']=='replica')=='link_down'
+                wait_ready(disconnected)
             finally:monitor.stop()
-    print('Redis replication + Sentinel: live roles, quorum, authentication, and NAT endpoint matching passed.',flush=True)
+    print('Redis replication + Sentinel: live roles, quorum, authentication, write-load catch-up, byte gaps, and link failure passed.',flush=True)
 finally:
     for name in reversed(created):
         subprocess.run(['docker','rm','-f',name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=20)

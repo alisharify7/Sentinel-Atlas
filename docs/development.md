@@ -16,6 +16,7 @@ sentinel-atlas/
 │   ├── monitoring/               # Background workers and public telemetry
 │   │   ├── monitor.py            # Cached cluster state and Ansible collector
 │   │   ├── direct_monitor.py     # Redis protocol collector
+│   │   ├── replication.py        # Sampled replication status and byte gaps
 │   │   ├── demo.py               # Labelled sample scenarios
 │   │   └── public_schema.py      # Data allowlists
 │   ├── probes/                   # Remote resources shipped with the package
@@ -71,6 +72,7 @@ change. Environment variables continue to override `.env` values.
 ```bash
 python -m unittest discover -s tests -v
 node --check sentinel_atlas/static/app.js
+node tests/test_ui.js
 # Optional Docker-backed service checks:
 python tests/integration.py
 # Build and verify the packaged runtime container:

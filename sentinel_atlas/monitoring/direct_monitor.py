@@ -108,8 +108,8 @@ class DirectMonitor(LiveMonitor):
             client = clients['redis']
             info, error = safe_call(client.info)
             values['info'] = ('\n'.join(f'{key}:{value}' for key, value in (info or {}).items()), error)
-            runtime, error = safe_call(lambda: client.config_get('dir', 'logfile'))
-            values['config'] = (flatten(runtime or {}), error)
+            runtime, error = safe_call(lambda: client.config_get('*'))
+            values['config'] = (runtime, error)
         if 'sentinel' in clients:
             client = clients['sentinel']
             # Separate command arguments avoid redis-py's convenience callback,
@@ -118,7 +118,9 @@ class DirectMonitor(LiveMonitor):
             values['sentinel'] = (flatten(master) if isinstance(master, dict) else '\n'.join(map(str, master or [])), error)
             quorum, error = safe_call(lambda: client.execute_command('SENTINEL', 'CKQUORUM', metadata['cluster']))
             values['quorum'] = (str(quorum) if quorum else None, error)
-        redis_info, sentinel_info, _ = service_metrics(values)
+        secrets = [client.connection_pool.connection_kwargs.get('password') for client in clients.values()
+                   if hasattr(client, 'connection_pool')]
+        redis_info, sentinel_info, _ = service_metrics(values, secrets)
         logs = {service: {'status': 'unsupported', 'source': 'Server probe required', 'lines': []} for service in clients}
         return metadata['name'], {'metadata': metadata, 'telemetry': {
             'redis': redis_info, 'sentinel': sentinel_info, 'logs': logs, 'hardware': {}, 'container': {}, 'storage': []}}

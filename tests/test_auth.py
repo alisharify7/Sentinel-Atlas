@@ -130,7 +130,7 @@ class AuthTests(unittest.TestCase):
 
     def test_lowercase_bootstrap_environment_names_are_supported(self):
         with patch.dict(os.environ,{'default_account':'owner','default_password':'owner-password',
-            'database_url':'sqlite://','secret_key':'test-lowercase-key-'*3},clear=True):
+            'database_url':'sqlite://','secret_key':'test-lowercase-key-'*3,'SENTINEL_ENV_FILE':os.devnull},clear=True):
             app=create_app(DemoMonitor())
             try:
                 self.assertEqual(app.extensions['accounts'].list_users()[0].username,'owner')

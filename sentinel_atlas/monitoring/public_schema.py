@@ -1,10 +1,11 @@
 """Explicit allowlists for data permitted to leave the telemetry boundary."""
 import math
+from ..probes.remote_probe import clean_configuration
 
 META = ('name', 'address', 'container', 'cluster', 'deployment', 'redis_member', 'sentinel_member', 'redis_port', 'sentinel_port', 'sentinel_address', 'replication_address', 'replication_port')
 STORAGE = ('label', 'host_path', 'container_path', 'mounted', 'total', 'used', 'available', 'source', 'filesystem', 'unavailable')
 FIELDS = {
-    'redis': ('up', 'error', 'role', 'version', 'uptime_seconds', 'clients', 'ops_per_second', 'memory_used', 'memory_rss', 'memory_max', 'connected_replicas', 'upstream', 'upstream_port', 'link', 'syncing', 'replication_offset', 'last_master_io', 'aof_enabled', 'rdb_status', 'aof_status', 'data_directory', 'logfile', 'config_file'),
+    'redis': ('up', 'error', 'role', 'version', 'uptime_seconds', 'clients', 'ops_per_second', 'memory_used', 'memory_rss', 'memory_max', 'connected_replicas', 'upstream', 'upstream_port', 'link', 'syncing', 'replication_offset', 'replication_id', 'last_master_io', 'link_down_seconds', 'sync_total_bytes', 'sync_read_bytes', 'sync_left_bytes', 'loading', 'loading_percent', 'aof_enabled', 'rdb_status', 'aof_status', 'data_directory', 'logfile', 'config_file', 'config_status'),
     'sentinel': ('up', 'error', 'quorum_ok', 'master_ip', 'master_port', 'flags', 'known_replicas', 'other_sentinels', 'required_quorum'),
     'hardware': ('hostname', 'os', 'kernel', 'architecture', 'cpu_cores', 'load_1m', 'cpu_total', 'cpu_idle', 'memory_total', 'memory_used', 'uptime_seconds'),
     'container': ('state', 'memory_current', 'memory_limit', 'tasks'),
@@ -51,6 +52,9 @@ def clean_record(record):
     telemetry = record.get('telemetry')
     if isinstance(telemetry, dict):
         result['telemetry'] = {key: pick(telemetry.get(key), fields) for key, fields in FIELDS.items()}
+        redis = telemetry.get('redis')
+        if isinstance(redis, dict) and 'configuration' in redis:
+            result['telemetry']['redis']['configuration'] = clean_configuration(redis['configuration'])
         result['telemetry']['storage'] = [pick(item, STORAGE) for item in storage_items(telemetry.get('storage')) if isinstance(item, dict)][:16]
         result['telemetry']['logs'] = clean_logs(telemetry.get('logs'))
         if telemetry.get('probe_error'):

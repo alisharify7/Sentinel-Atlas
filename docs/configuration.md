@@ -155,6 +155,27 @@ healthy replicated group additionally requires its configured replicas connected
 to that master. Sentinel groups also require observed quorum and agreement.
 Split masters, failed authentication, broken replication, and outages are shown.
 
+### Watching replication during a load test
+
+Every Redis graph card and the fleet's **Sync status** column show **In sync**,
+**Catching up**, **Full sync**, **Loading dataset**, **Link down**, or **Unavailable**.
+Masters are labeled **Master**. Leave the dashboard open while running your
+`load.sh`; these values update automatically with each collection.
+
+Replica cards show a sampled byte gap from the upstream's replication offset.
+The **Overview → Live replication** section also shows processed/upstream offsets
+and time since the last upstream I/O. Gaps compare independently collected samples
+and are approximate during writes; zero means caught up at those observations.
+If the upstream is unmonitored, offsets are missing, or replication IDs differ
+after failover, the dashboard shows **Sync unknown** rather than claiming success.
+
+Full sync transfers and dataset loading show progress when Redis reports enough
+information. Diskless transfers with an unknown total size show received bytes
+without inventing a percentage. These metrics come from Redis's read-only
+[`INFO` replication and persistence fields](https://redis.io/docs/latest/commands/info/).
+For more frequent observations, set `SENTINEL_POLL_INTERVAL=2` and restart the app;
+the default collection interval is five seconds.
+
 ## Optional Linux server probes: hardware and logs
 
 Direct Redis connections can read Redis/Sentinel metrics, but the Redis protocol
@@ -209,8 +230,21 @@ Existing `redis_configs`, `redis_sentinel_logging_config`, `*_mount_point`,
 `*_container_path`, and `container_rootfs_directory` variables supply defaults.
 Redis's runtime logfile is used unless explicitly overridden. Permission-limited
 accounts that cannot use `CONFIG GET` still receive permitted `INFO` metrics.
-Monitoring access requires Redis INFO and, when configured, selected CONFIG GET
+Monitoring access requires Redis INFO and, when configured, CONFIG GET
 and Sentinel read commands. This app does not administer Redis Cluster hash slots.
+
+Click a Redis node in the topology graph or fleet table to open its **Configuration**
+tab. It lists that node's runtime settings from `CONFIG GET *`, with search by name
+or value. The **Overview** and **Storage & paths** tabs provide its metrics and
+environment details. Settings refresh with the normal background collection.
+Credentials, authentication secrets, and private key paths are redacted before
+transport. If `CONFIG GET` is denied or unavailable, the tab explains that the
+configuration cannot be read; permitted `INFO` metrics continue to work.
+
+The topology uses teal for masters, blue for replicas, and violet for Sentinel
+monitors. The **Sentinel watch** row shows each monitor's quorum status, master
+view, and peers. Select a monitor to open its **Sentinel** inspector. Warnings
+identify missing quorum or disagreement; unavailable services are marked in red.
 
 ## Live logs and collection
 
