@@ -26,7 +26,7 @@ Environment variables (command-line options override them):
 
 Options:
   --image NAME       Set IMAGE_NAME (e.g. your-user/sentinel-atlas)
-  --tag TAG          Set IMAGE_TAG (e.g. 1.0.0)
+  --tag TAG          Set IMAGE_TAG (e.g. 2.0.0)
   --target TARGET    Choose runtime or ansible
   --platforms LIST   Set a platform or comma-separated publish platforms
   --push             Publish instead of loading the local Docker engine
@@ -35,8 +35,8 @@ Options:
 
 Examples:
   ./script/make-docker.sh
-  IMAGE_NAME=your-user/sentinel-atlas IMAGE_TAG=1.0.0 ./script/make-docker.sh
-  PUSH=true IMAGE_NAME=your-user/sentinel-atlas IMAGE_TAG=1.0.0 ./script/make-docker.sh
+  IMAGE_NAME=your-user/sentinel-atlas IMAGE_TAG=2.0.0 ./script/make-docker.sh
+  PUSH=true IMAGE_NAME=your-user/sentinel-atlas IMAGE_TAG=2.0.0 ./script/make-docker.sh
 
 Run 'docker login' yourself before publishing. Runtime secrets and .env files
 are not read by this script or passed as image build arguments.
@@ -68,7 +68,7 @@ done
 [[ "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ && ${#IMAGE_TAG} -le 128 ]] || fail 'IMAGE_TAG must be a valid Docker tag (up to 128 characters)'
 if [[ "$PUSH" == true ]]; then
   [[ "$IMAGE_NAME" == */* ]] || fail 'Publishing needs a repository namespace: IMAGE_NAME=your-user/sentinel-atlas'
-  [[ "$IMAGE_TAG" != local ]] || fail 'Set an explicit IMAGE_TAG before publishing (for example 1.0.0)'
+  [[ "$IMAGE_TAG" != local ]] || fail 'Set an explicit IMAGE_TAG before publishing (for example 2.0.0)'
   PLATFORMS="${PLATFORMS:-linux/amd64,linux/arm64}"
 elif [[ "$PLATFORMS" == *,* ]]; then
   fail 'Local loading supports one platform. Set PUSH=true for a multi-platform publish.'

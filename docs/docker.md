@@ -32,7 +32,7 @@ Build a versioned image without publishing:
 
 ```bash
 IMAGE_NAME=your-dockerhub-user/sentinel-atlas \
-IMAGE_TAG=0.1.0 \
+IMAGE_TAG=2.0.0 \
 ./script/make-docker.sh
 ```
 
@@ -41,7 +41,7 @@ When you decide to publish, log in yourself and enable publishing explicitly:
 ```bash
 docker login
 IMAGE_NAME=your-dockerhub-user/sentinel-atlas \
-IMAGE_TAG=0.1.0 \
+IMAGE_TAG=2.0.0 \
 PUSH=true \
 TAG_LATEST=true \
 ./script/make-docker.sh
@@ -71,7 +71,7 @@ They can use the same `--env-file` and volume options with its repository/tag:
 
 ```bash
 # Replace this value with your published repository and tag.
-ATLAS_IMAGE=your-dockerhub-user/sentinel-atlas:0.1.0
+ATLAS_IMAGE=your-dockerhub-user/sentinel-atlas:2.0.0
 docker pull "$ATLAS_IMAGE"
 docker volume create sentinel-atlas-data
 docker run -d --name sentinel-atlas --restart unless-stopped \
@@ -92,9 +92,9 @@ alongside your `.env` file and set `ATLAS_IMAGE` to a local or published image:
 ```bash
 ATLAS_IMAGE=sentinel-atlas:local docker compose -f compose.image.yaml up -d
 # For a published image, set ATLAS_IMAGE to that repository/tag and pull first:
-ATLAS_IMAGE=your-dockerhub-user/sentinel-atlas:0.1.0 \
+ATLAS_IMAGE=your-dockerhub-user/sentinel-atlas:2.0.0 \
   docker compose -f compose.image.yaml pull
-ATLAS_IMAGE=your-dockerhub-user/sentinel-atlas:0.1.0 \
+ATLAS_IMAGE=your-dockerhub-user/sentinel-atlas:2.0.0 \
   docker compose -f compose.image.yaml up -d
 ```
 

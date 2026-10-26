@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sentinel-atlas"
-version = "0.1.0"
+version = "2.0.0"
 description = "An authenticated Redis and Sentinel observatory"
 authors = [{name = "Ali Sharify"}]
 readme = "README.md"

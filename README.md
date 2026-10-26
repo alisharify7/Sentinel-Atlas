@@ -2,7 +2,7 @@
   <img src="docs/assets/cover.svg" alt="Sentinel Atlas — Every node. One clear view. An owl watches over standalone Redis, replication, and Sentinel." width="100%">
 </p>
 
-<h1 align="center">Sentinel Atlas</h1>
+<h1 align="center">Sentinel Atlas 2.0.0</h1>
 
 <p align="center">
   A self-hosted, read-only observatory for Redis and Redis Sentinel.<br>
@@ -19,6 +19,7 @@
   <a href="#connect-your-redis">Connect Redis</a> &nbsp;·&nbsp;
   <a href="docs/docker.md">Docker</a> &nbsp;·&nbsp;
   <a href="docs/configuration.md">Configuration guide</a> &nbsp;·&nbsp;
+  <a href="CHANGELOG.md">Release notes</a> &nbsp;·&nbsp;
   <a href="CONTRIBUTING.md">Contributing</a> &nbsp;·&nbsp;
   <a href="#support-the-project">Donate</a> &nbsp;·&nbsp;
   <a href="LICENSE">License</a>
