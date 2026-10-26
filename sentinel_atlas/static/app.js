@@ -101,6 +101,42 @@ function replicationDetails(node) {
   return `<div class="inspector-section replication-details"><div class="detail-label">LIVE REPLICATION</div><div class="sync-overview">${syncBadge(node)}<span>${esc(view.description)}</span></div>${view.progress!=null?`<div class="sync-progress" role="progressbar" aria-label="${view.key==='loading'?'Dataset loading':'Full sync transfer'}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${view.progress}"><span style="width:${view.progress}%"></span></div>`:''}${detail('Processed offset',r.up?offset(r.replication_offset):'—',true)}${r.role==='replica'?`${detail('Upstream',sync.upstream_name||r.upstream,true)}${detail('Upstream offset',offset(sync.upstream_offset),true)}${detail('Sampled byte gap',sync.lag_bytes!=null?bytes(sync.lag_bytes):'—',true)}${detail('Master link',r.up?r.link:'—')}${detail('Last upstream I/O',r.up&&r.last_master_io!=null&&r.last_master_io>=0?`${fmt(r.last_master_io)}s ago`:'—')}${view.key==='link_down'?detail('Link down for',r.link_down_seconds!=null&&r.link_down_seconds>=0?`${fmt(r.link_down_seconds)}s`:'—'):''}`:''}<p class="muted-text">Updates every ${state.poll_interval||5}s. Offset gaps compare independent samples of the same replication stream; they are approximate under load.</p></div>`;
 }
 
+let graphView = {key:'', zoom:1, width:0, height:0, viewportWidth:0, viewportHeight:0, fit:1};
+
+function layoutGraph(nodes, masterName, cardWidth, cardHeight) {
+  const positions=new Map(), master=nodes.find(n=>n.name===masterName&&n.redis.up&&n.redis.role==='master');
+  const others=nodes.filter(n=>n!==master).sort((a,b)=>a.name.localeCompare(b.name));
+  const stepX=cardWidth+52, stepY=cardHeight+52;
+  if(nodes.length===1) return {positions:new Map([[nodes[0].name,{x:40,y:40}]]),width:cardWidth+80,height:cardHeight+80};
+  if(master) positions.set(master.name,{x:0,y:0});
+  // Each ring has enough space for rectangular cards, including between rings.
+  for(let start=0,ring=1;start<others.length;ring++) {
+    const count=Math.min(6*ring,others.length-start), radius=ring===1&&count<=4?1.2:1.5*ring;
+    for(let i=0;i<count;i++) {
+      const angle=2*Math.PI*i/count-(count>2?Math.PI/2:0);
+      positions.set(others[start+i].name,{x:Math.cos(angle)*radius*stepX,y:Math.sin(angle)*radius*stepY});
+    }
+    start+=count;
+  }
+  let extentX=0,extentY=0;
+  positions.forEach(p=>{extentX=Math.max(extentX,Math.abs(p.x));extentY=Math.max(extentY,Math.abs(p.y));});
+  const width=2*extentX+cardWidth+80, height=2*extentY+cardHeight+80;
+  positions.forEach(p=>{p.x+=width/2-cardWidth/2;p.y+=height/2-cardHeight/2;});
+  return {positions,width,height};
+}
+
+function updateGraphView(recenter=false) {
+  const v=graphView, scale=v.fit*v.zoom;
+  const width=Math.max(v.viewportWidth,v.width*scale),height=Math.max(v.viewportHeight,v.height*scale);
+  const scene=$('graphScene'), stage=$('graphStage'), viewport=$('graphViewport');
+  stage.style.width=`${width}px`;stage.style.height=`${height}px`;
+  scene.style.transform=`translate(${(width-v.width*scale)/2}px,${(height-v.height*scale)/2}px) scale(${scale})`;
+  $('graphZoom').textContent=`${Math.round(scale*100)}%`;
+  $('graphZoomOut').disabled=v.zoom<=1;
+  $('graphZoomIn').disabled=scale>=1.5-.000001;
+  if(recenter) {viewport.scrollLeft=(width-v.viewportWidth)/2;viewport.scrollTop=(height-v.viewportHeight)/2;}
+}
+
 function renderGraph() {
   if (!state) return;
   const nodes = state.nodes.filter(n => n.metadata.redis_member), container = $('graphContainer');
@@ -108,23 +144,21 @@ function renderGraph() {
   const s = state.summary;
   $('topologyStats').innerHTML = `<span>${icon('server')}<strong>${fmt(s.redis_up)} / ${fmt(s.redis_total)}</strong> Redis online</span><span>${icon('chart')}<strong>${fmt(s.ops)}</strong> ops / sec</span><span>${icon('stack')}<strong>${bytes(s.memory)}</strong> memory</span>`;
   $('graphEmpty').hidden = nodes.length > 0;
-  if (!nodes.length) { $('graphNodes').innerHTML=''; $('graphLines').innerHTML=''; container.style.height='230px'; return; }
-  const w = container.clientWidth, gap = 24, cardHeight = 236;
-  const cardWidth = Math.max(150, Math.min(w < 570 ? 224 : 240, w-40));
-  const columns = Math.max(1, Math.min(3, Math.floor((w-40+gap)/(cardWidth+gap))));
+  $('graphToolbar').hidden=!nodes.length;
+  $('graphViewport').hidden=!nodes.length;
+  if (!nodes.length) { $('graphNodes').innerHTML=''; $('graphLines').innerHTML=''; container.style.height='230px'; graphView.key=''; return; }
+  const w = Math.max(1,container.clientWidth), cardHeight = 236, cardWidth = 240;
   const masters = nodes.filter(n => n.redis.up && n.redis.role==='master');
-  const rest = nodes.filter(n => !masters.includes(n));
-  const positions = new Map();
-  function row(items, y) {
-    items.forEach((node,i) => positions.set(node.name, {x:(w-items.length*cardWidth-(items.length-1)*gap)/2+i*(cardWidth+gap), y}));
-  }
-  let nextY=62;
-  for (const group of [masters,rest]) {
-    for (let i=0;i<group.length;i+=columns) {row(group.slice(i,i+columns),nextY);nextY+=cardHeight+86;}
-  }
-  const height=nextY-50;
-  container.style.height=`${height}px`;
-  $('graphLines').setAttribute('viewBox',`0 0 ${w} ${height}`);
+  const masterName=masters.length===1?masters[0].name:null;
+  const {positions,width,height}=layoutGraph(nodes,masterName,cardWidth,cardHeight);
+  const viewportHeight=Math.min(680,Math.max(380,Math.min(w*.78,height)));
+  container.style.height=`${viewportHeight+60}px`;
+  const key=JSON.stringify([state.cluster,masterName,nodes.map(n=>n.name).sort()]);
+  const recenter=key!==graphView.key||w!==graphView.viewportWidth;
+  graphView={...graphView,key,width,height,viewportWidth:w,viewportHeight,fit:Math.min(1,w/width,viewportHeight/height),zoom:recenter?1:graphView.zoom};
+  $('graphScene').style.width=`${width}px`;$('graphScene').style.height=`${height}px`;
+  $('graphLines').setAttribute('viewBox',`0 0 ${width} ${height}`);
+  updateGraphView(recenter);
   $('graphNodes').innerHTML = nodes.map(node => {
     const p=positions.get(node.name), r=node.redis, active=online(node), isMaster=role(node)==='master';
     const status=!active?'Unavailable':r.loading?'Loading dataset':isMaster?'Accepting writes':r.syncing?'Synchronizing':r.link==='up'?'Replication connected':'Replication link down';
@@ -146,14 +180,16 @@ function renderGraph() {
     // Only draw observed relationships; an unreachable node's upstream is unknown.
     if (!upstream || upstream===node) return;
     const from=positions.get(upstream.name),to=positions.get(node.name),connected=node.redis.up&&node.redis.link==='up'&&!node.redis.syncing&&!node.redis.loading&&upstream.redis.up;
-    const sameRow=from.y===to.y;
-    const x1=from.x+cardWidth/2,y1=from.y+cardHeight+2,x2=to.x+cardWidth/2,y2=sameRow?to.y+cardHeight+2:to.y-8;
-    const mid=sameRow?y1+36:(y1+y2)/2;
-    const path=`M${x1},${y1} C${x1},${mid} ${x2},${mid} ${x2},${y2}`;
+    const dx=to.x-from.x,dy=to.y-from.y;
+    // Attach to the facing borders so links work in every radial direction.
+    const ratio=1/Math.max(Math.abs(dx)/(cardWidth/2+8),Math.abs(dy)/(cardHeight/2+8));
+    const x1=from.x+cardWidth/2+dx*ratio,y1=from.y+cardHeight/2+dy*ratio;
+    const x2=to.x+cardWidth/2-dx*ratio,y2=to.y+cardHeight/2-dy*ratio;
+    const path=`M${x1},${y1} L${x2},${y2}`;
     const related=selected===node.name||selected===upstream.name;
     lines+=`<path d="${path}" class="edge ${connected?'':'down'} ${related?'related':''}" marker-end="url(#${connected?'arrowhead':'arrowhead-down'})"/>`;
     if (connected) lines+=`<circle class="flow-particle" r="3"><animateMotion dur="3s" begin="-${index}s" repeatCount="indefinite" path="${path}"/></circle>`;
-    if (!sameRow && y2>y1) lines+=`<rect x="${(x1+x2)/2-55}" y="${mid-9}" width="110" height="18" rx="9" class="edge-label-bg"/><text x="${(x1+x2)/2}" y="${mid+3}" text-anchor="middle" class="edge-label ${connected?'':'down'}">${connected?'REPLICATING':node.redis.syncing?'SYNCING':'LINK DOWN'}</text>`;
+    if (!connected) lines+=`<rect x="${(x1+x2)/2-55}" y="${(y1+y2)/2-9}" width="110" height="18" rx="9" class="edge-label-bg"/><text x="${(x1+x2)/2}" y="${(y1+y2)/2+3}" text-anchor="middle" class="edge-label down">${node.redis.syncing?'SYNCING':node.redis.loading?'LOADING':'LINK DOWN'}</text>`;
   });
   $('graphLines').innerHTML=lines;
 }
@@ -288,6 +324,12 @@ async function fetchSnapshot() {
 }
 
 document.addEventListener('click',async event=>{
+  const graphAction=event.target.closest('[data-graph-action]');
+  if(graphAction) {
+    const action=graphAction.dataset.graphAction;
+    graphView.zoom=action==='fit'?1:Math.max(1,Math.min(1.5/graphView.fit,graphView.zoom*(action==='in'?1.25:.8)));
+    updateGraphView(true);
+  }
   const node=event.target.closest('[data-node]');
   if (node) {selected=node.dataset.node;configFilter='';selectedTab=node.dataset.inspectTab || (state.nodes.find(n=>n.name===selected)?.metadata.redis_member?'configuration':'overview');renderGraph();renderSentinels();renderFleet();renderInspector();syncLogControls();
     if (window.matchMedia('(max-width: 1000px)').matches) $('inspector').scrollIntoView({behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});

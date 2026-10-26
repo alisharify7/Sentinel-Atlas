@@ -32,7 +32,7 @@ function element(id) {
   };
 }
 const document={activeElement:null,getElementById:id=>elements.get(id)||null,addEventListener:(kind,fn)=>listeners[kind]=fn};
-for (const id of ['inspector','graphContainer','graphEmpty','graphNodes','graphLines','topologyStats','sentinelNetwork','fleetBody']) elements.set(id,element(id));
+for (const id of ['inspector','graphContainer','graphEmpty','graphNodes','graphLines','topologyStats','sentinelNetwork','fleetBody','graphToolbar','graphViewport','graphStage','graphScene','graphZoom','graphZoomIn','graphZoomOut']) elements.set(id,element(id));
 let mobile=false;
 const context=vm.createContext({document,Intl,console,window:{matchMedia:()=>({matches:mobile})}});
 const source=fs.readFileSync(path.join(__dirname,'../sentinel_atlas/static/app.js'),'utf8');
@@ -44,16 +44,22 @@ const run=code=>vm.runInContext(code,context);
 const node=(name,role)=>({name,metadata:{name,cluster:'main',redis_member:true,sentinel_member:true,address:name,redis_port:6379,sentinel_port:26379,deployment:'direct'},redis:{up:true,role,upstream:role==='replica'?'primary':null,upstream_port:6379,link:'up',config_status:'ok',configuration:{timeout:name==='primary'?'10':'20',save:''}},sentinel:{up:true,quorum_ok:true,master_ip:'primary',master_port:6379,required_quorum:2,other_sentinels:2,known_replicas:2,flags:'master'},history:[],hardware:{},container:{},storage:[]});
 const initial={master:'primary',summary:{redis_up:3,redis_total:3,ops:1200,memory:1024,consensus:true},nodes:[node('primary','master'),node('replica-a','replica'),node('replica-b','replica')]};
 const reset=()=>{document.activeElement=null;run(`state=${JSON.stringify(initial)};selected='primary';selectedTab='overview';configFilter='';`);};
-function assertLayout(width) {
+function assertLayout(width,count=3) {
   elements.get('graphContainer').clientWidth=width;
   run('renderGraph()');
   const boxes=[...elements.get('graphNodes').innerHTML.matchAll(/style="left:([\d.-]+)px;top:([\d.-]+)px;width:([\d.-]+)px"/g)].map(m=>({x:+m[1],y:+m[2],w:+m[3],h:236}));
-  assert.equal(boxes.length,3);
+  assert.equal(boxes.length,count);
+  const sceneWidth=parseFloat(elements.get('graphScene').style.width),sceneHeight=parseFloat(elements.get('graphScene').style.height);
   for (const box of boxes) {
-    assert.ok(box.x>=0 && box.x+box.w<=width);
-    assert.ok(box.y+box.h<=parseFloat(elements.get('graphContainer').style.height));
+    assert.ok(box.x>=0 && box.x+box.w<=sceneWidth);
+    assert.ok(box.y>=0 && box.y+box.h<=sceneHeight);
   }
   boxes.forEach((a,i)=>boxes.slice(i+1).forEach(b=>assert.ok(a.x+a.w<=b.x||b.x+b.w<=a.x||a.y+a.h<=b.y||b.y+b.h<=a.y,'Node cards must not overlap')));
+  const scale=run('graphView.fit');
+  assert.ok(sceneWidth*scale<=width+.01,'Fit must include every node horizontally');
+  assert.ok(sceneHeight*scale<=run('graphView.viewportHeight')+.01,'Fit must include every node vertically');
+  assert.ok(parseFloat(elements.get('graphContainer').style.height)<=740,'Large clusters must not create an unbounded page');
+  return boxes;
 }
 const click=async (name,tab)=>listeners.click({target:{closest:selector=>selector==='[data-node]'?{dataset:{node:name,...(tab?{inspectTab:tab}:{})}}:null}});
 (async()=>{
@@ -75,6 +81,45 @@ const click=async (name,tab)=>listeners.click({target:{closest:selector=>selecto
   reset();
   for (const width of [220,300,520,800,1140]) assertLayout(width);
   assert.equal((elements.get('graphLines').innerHTML.match(/class="edge /g)||[]).length,2);
+  // Growing clusters stay centered, fit the viewport, and retain non-overlapping cards.
+  for(const count of [1,2,4,5,6,7,8,13,19,31,100]) {
+    const nodes=[node('primary','master'),...Array.from({length:count-1},(_,i)=>node(`replica-${i}`,'replica'))];
+    run(`state.nodes=${JSON.stringify(nodes)};`);
+    for(const width of [220,520,800,1600]) {
+      const boxes=assertLayout(width,count),master=boxes[0];
+      assert.ok(Math.abs(master.x+master.w/2-parseFloat(elements.get('graphScene').style.width)/2)<.01,'Master must be horizontally centered');
+      assert.ok(Math.abs(master.y+master.h/2-parseFloat(elements.get('graphScene').style.height)/2)<.01,'Master must be vertically centered');
+    }
+    assert.equal((elements.get('graphLines').innerHTML.match(/class="edge /g)||[]).length,count-1);
+  }
+  const graphClick=async action=>listeners.click({target:{closest:selector=>selector==='[data-graph-action]'?{dataset:{graphAction:action}}:null}});
+  await graphClick('in');
+  assert.ok(run('graphView.zoom')>1);
+  const zoom=run('graphView.zoom');
+  run('renderGraph()');
+  assert.equal(run('graphView.zoom'),zoom,'Polling must preserve zoom');
+  elements.get('graphViewport').scrollLeft=120;
+  elements.get('graphViewport').scrollTop=80;
+  run('renderGraph()');
+  assert.equal(elements.get('graphViewport').scrollLeft,120,'Polling must preserve horizontal scroll');
+  assert.equal(elements.get('graphViewport').scrollTop,80,'Polling must preserve vertical scroll');
+  await graphClick('fit');
+  assert.equal(run('graphView.zoom'),1);
+  assert.equal(elements.get('graphZoomOut').disabled,true);
+  for(let i=0;i<40;i++) await graphClick('in');
+  assert.ok(run('graphView.fit*graphView.zoom')<=1.5+.0001);
+  // A promotion recenters the new master; conflicts never choose an arbitrary hub.
+  reset();
+  run("state.nodes[0].redis.role='replica';state.nodes[1].redis.role='master';state.master='replica-a';renderGraph();");
+  const centered=run("layoutGraph(state.nodes,state.master,240,236)");
+  assert.equal(centered.positions.get('replica-a').x+120,centered.width/2);
+  assert.equal(centered.positions.get('replica-a').y+118,centered.height/2);
+  run("state.nodes[0].redis.role='master';renderGraph();");
+  assert.equal(JSON.parse(run('graphView.key'))[1],null);
+  run('state.nodes.forEach(n=>n.redis.up=false);');
+  assertLayout(520);
+  reset();
+  run('renderGraph()');
   run('renderSentinels()');
   assert.match(elements.get('sentinelNetwork').innerHTML,/Consensus reached/);
   assert.equal(elements.get('sentinelNetwork').children.length,3);
@@ -112,6 +157,8 @@ const click=async (name,tab)=>listeners.click({target:{closest:selector=>selecto
   assert.match(elements.get('sentinelNetwork').innerHTML,/Not configured/);
   run('state.nodes=[];renderGraph();renderInspector();');
   assert.equal(elements.get('graphNodes').children.length,0);
+  assert.equal(elements.get('graphToolbar').hidden,true);
+  assert.equal(elements.get('graphViewport').hidden,true);
   assert.match(elements.get('inspector').innerHTML,/Inspect an instance/);
-  console.log('UI checks passed: responsive graph geometry, Sentinel consensus/failures, configuration selection/search, Sentinel endpoint, mobile navigation, and observed replication links.');
+  console.log('UI checks passed: centered radial topology (1–100 nodes), responsive fit/zoom, polling view preservation, failover, Sentinel consensus/failures, configuration selection/search, mobile navigation, and observed replication links.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

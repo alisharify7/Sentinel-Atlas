@@ -27,21 +27,24 @@
 ## Your Redis, in view
 
 Sentinel Atlas turns Redis roles and Sentinel observations into a visual topology.
-A gold crown follows the observed master, replication links show connection
-health, and an activity feed records outages, recoveries, and promotions.
+The observed master stays in the center, replicas expand into surrounding rings,
+and directional links show replication health. The graph fits the available
+space, with zoom and scrolling for larger groups. An activity feed records
+outages, recoveries, and promotions.
 
 Use it for a single cache, a primary/replica group, or a Sentinel deployment.
 Connect directly from Windows, macOS, or Linux, or add optional server probes
 for Linux hardware, storage, and live service logs.
 
 <p align="center">
-  <img src="docs/assets/topology.svg" alt="Topology illustration showing a crowned Redis master, two replicas, health cards, and an instance inspector." width="100%">
-  <br><sub>Topology illustration · sample data</sub>
+  <img src="docs/assets/demo-dashboard.png" alt="Demo dashboard showing redis2 centered between two replicas, fit and zoom controls, Sentinel consensus, cluster health, and the instance inspector." width="100%">
+  <br><sub>Running demo · sample data · centered master, replication health, and Sentinel agreement</sub>
 </p>
 
 | Feature | What you can see |
 | --- | --- |
-| **Live topology** | Current master, replicas, upstream links, synchronization, and role changes |
+| **Live topology** | Centered master, radial replica layout, directional upstream links, synchronization, and role changes |
+| **Large groups** | Automatic fit, zoom controls, scrolling, and a stable view during polling |
 | **Sentinel health** | Master agreement, configured quorum, and Sentinel availability |
 | **Instance details** | Redis version, clients, operations per second, memory, and persistence status |
 | **Multiple groups** | Switch between independent caches and replication/Sentinel groups |
@@ -102,6 +105,23 @@ python -m sentinel_atlas --demo
 Open **[localhost:5050](http://127.0.0.1:5050)** and sign in. Demo mode uses clearly
 labelled sample data and includes healthy, outage, and master-promotion scenarios.
 It makes no Redis or SSH connections. Login is required in demo mode too.
+
+### Explore the topology
+
+Select a Redis node to inspect its configuration, replication status, and storage.
+Use **+** and **−** to zoom, scroll to explore the enlarged graph, and choose
+**Fit** to see the whole group again. Polling preserves your zoom and scroll
+position; a master promotion or a change in group membership fits the new layout
+automatically.
+
+<p align="center">
+  <img src="docs/assets/topology.svg" alt="Radial topology illustration with one master at the center and six replicas arranged around it, with fit and zoom controls." width="100%">
+  <br><sub>Radial topology illustration · one master and six replicas · the built-in demo contains three Redis instances</sub>
+</p>
+
+Use the **Sample data** selector to compare a healthy cluster, a node outage, and
+a master promotion. During promotion, `redis3` moves to the center and the
+replication arrows follow the newly observed upstream relationships.
 
 ## Run with Docker
 
@@ -232,11 +252,15 @@ and entry points. Existing `python app.py` commands continue to work.
 
 ```bash
 python -m unittest discover -s tests -v
+node --check sentinel_atlas/static/app.js
+node tests/test_ui.js
 ```
 
 The suite covers authentication, CSRF, account persistence, session revocation,
 standalone monitoring, independent groups, server probes, topology changes,
-log limits, and credential filtering. The optional Ansible test skips when its
+log limits, and credential filtering. UI checks cover radial layouts from 1 to
+100 nodes, fit and zoom, failover, and view preservation during polling.
+The optional Ansible test skips when its
 dependencies are absent.
 
 To test against real PostgreSQL, Redis replication, and Sentinel using disposable

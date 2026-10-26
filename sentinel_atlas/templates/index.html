@@ -59,7 +59,12 @@
     <section class="panel topology-panel" id="topology">
      <div class="panel-heading"><div><div class="section-eyebrow">LIVE TOPOLOGY</div><h2>Replication & Sentinel</h2><p class="panel-description">Select a Redis node to explore its configuration.</p></div><span class="cluster-tag"><i></i><span id="clusterName">redis</span></span></div>
      <div class="topology-stats" id="topologyStats" aria-label="Live cluster activity"></div>
-     <div class="graph-container" id="graphContainer"><div class="canvas-label">REDIS REPLICATION <span>Data flow →</span></div><svg class="graph-lines" id="graphLines" aria-hidden="true"></svg><div class="graph-nodes" id="graphNodes"></div><div class="graph-empty" id="graphEmpty"><span class="loading-orbit"></span><strong>Waiting for Redis nodes</strong><span>Configured Redis instances will appear here.</span></div></div>
+     <div class="graph-container" id="graphContainer">
+      <div class="canvas-label">REDIS REPLICATION <span>Master → replicas</span></div>
+      <div class="graph-toolbar" id="graphToolbar" role="group" aria-label="Topology zoom" hidden><button type="button" data-graph-action="out" id="graphZoomOut" aria-label="Zoom out">−</button><output id="graphZoom" aria-label="Graph zoom">100%</output><button type="button" data-graph-action="in" id="graphZoomIn" aria-label="Zoom in">+</button><button type="button" data-graph-action="fit">Fit</button></div>
+      <div class="graph-viewport" id="graphViewport" tabindex="0" role="region" aria-label="Redis topology. Zoom in and scroll to explore."><div class="graph-stage" id="graphStage"><div class="graph-scene" id="graphScene"><svg class="graph-lines" id="graphLines" aria-hidden="true"></svg><div class="graph-nodes" id="graphNodes"></div></div></div></div>
+      <div class="graph-empty" id="graphEmpty"><span class="loading-orbit"></span><strong>Waiting for Redis nodes</strong><span>Configured Redis instances will appear here.</span></div>
+     </div>
      <div class="sentinel-network" id="sentinelNetwork" aria-label="Sentinel monitoring"></div>
      <div class="graph-footer"><div class="legend"><span><i class="legend-dot master-dot"></i> Master</span><span><i class="legend-dot replica-dot"></i> Replica</span><span><i class="legend-dot sentinel-dot"></i> Sentinel</span><span><i class="legend-dot red"></i> Unavailable</span></div><span id="pollStatus">Polling every 5s</span></div>
     </section>
