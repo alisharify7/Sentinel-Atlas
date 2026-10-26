@@ -5,8 +5,8 @@
 <h1 align="center">Sentinel Atlas</h1>
 
 <p align="center">
-  A self-hosted, read-only dashboard for Redis and Redis Sentinel.<br>
-  See the master. Follow replication. Keep an eye on every node.
+  A self-hosted, read-only observatory for Redis and Redis Sentinel.<br>
+  Explore your cluster. Follow replication. Share the right view.
 </p>
 
 <p align="center">
@@ -15,10 +15,11 @@
 
 <p align="center">
   <a href="#quick-start">Quick start</a> &nbsp;·&nbsp;
+  <a href="#workspace-screenshots">Screenshots</a> &nbsp;·&nbsp;
   <a href="#connect-your-redis">Connect Redis</a> &nbsp;·&nbsp;
   <a href="docs/docker.md">Docker</a> &nbsp;·&nbsp;
   <a href="docs/configuration.md">Configuration guide</a> &nbsp;·&nbsp;
-  <a href="#development">Contributing</a> &nbsp;·&nbsp;
+  <a href="CONTRIBUTING.md">Contributing</a> &nbsp;·&nbsp;
   <a href="LICENSE">License</a>
 </p>
 
@@ -26,33 +27,60 @@
 
 ## Your Redis, in view
 
-Sentinel Atlas turns Redis roles and Sentinel observations into a visual topology.
-The observed master stays in the center, replicas expand into surrounding rings,
-and directional links show replication health. The graph fits the available
-space, with zoom and scrolling for larger groups. An activity feed records
-outages, recoveries, and promotions.
+Sentinel Atlas brings cluster health, live replication, instance configuration,
+and service logs into a workspace with dedicated pages. Start with an automatically
+arranged topology, zoom at the cursor, and move nodes while their links follow.
+Lock a view for an incident, export the complete map, or share one cluster through
+a revocable link with the permissions and lifetime you choose.
 
 Use it for a single cache, a primary/replica group, or a Sentinel deployment.
 Connect directly from Windows, macOS, or Linux, or add optional server probes
 for Linux hardware, storage, and live service logs.
 
 <p align="center">
-  <img src="docs/assets/demo-dashboard.png" alt="Demo dashboard showing redis2 centered between two replicas, fit and zoom controls, Sentinel consensus, cluster health, and the instance inspector." width="100%">
-  <br><sub>Running demo · sample data · centered master, replication health, and Sentinel agreement</sub>
+  <img src="docs/assets/demo-dashboard.png" alt="Live cluster page with labeled navigation, Redis master and replicas, wheel zoom, layout lock, fullscreen and download controls, Sentinel monitors, and the instance inspector." width="100%">
+  <br><sub>Live cluster · built-in demo data · interactive replication map, Sentinel agreement, and instance inspection</sub>
 </p>
 
-| Feature | What you can see |
+| Feature | What you can do |
 | --- | --- |
-| **Live topology** | Centered master, radial replica layout, directional upstream links, synchronization, and role changes |
-| **Large groups** | Automatic fit, zoom controls, scrolling, and a stable view during polling |
-| **Sentinel health** | Master agreement, configured quorum, and Sentinel availability |
-| **Instance details** | Redis version, clients, operations per second, memory, and persistence status |
-| **Multiple groups** | Switch between independent caches and replication/Sentinel groups |
-| **Live log console** | Redis/Sentinel tails with filtering, pause/resume, and follow-scrolling via server probes |
-| **Workspace accounts** | Required login, admin/viewer accounts, password changes, and revocable sessions |
+| **Overview** | See cluster health, online instances, quorum, the current master, and signals that need attention |
+| **Interactive live cluster** | Zoom with the mouse wheel, Ctrl+wheel, or trackpad; pan the canvas; drag nodes with links updating immediately |
+| **View controls** | Fit every node, reset the layout, enter fullscreen, or lock the camera and positions while live status keeps updating |
+| **Graph downloads** | Save the full current layout as standalone SVG, high-resolution PNG, or a single-page PDF, including nodes outside the visible area |
+| **Replication & Sentinel** | Follow observed upstream links, sampled offset gaps, full-sync progress, role changes, quorum, and master agreement |
+| **Instance explorer** | Search by name or address, filter by role or availability, and inspect configuration, memory, persistence, and optional server/storage details |
+| **Live logs** | Watch Redis and Sentinel output with filtering, pause/resume, and follow-scrolling through server probes |
+| **Cluster activity** | Filter discovery, outages, recoveries, warnings, and master promotions for the selected cluster |
+| **Multiple clusters** | Switch between caches and replication groups; keep the selected cluster and instance as you navigate |
+| **Profiles & sessions** | Update your username, password, display name, contact information, team, biography, and timezone; sign out other sessions |
+| **Scoped viewing links** | Share one cluster without requiring a recipient account; choose graph-only access or independently enable configuration, logs, server details, and activity |
+| **Expiry & revocation** | Generate links for 15 minutes, 1 hour, 24 hours, 7 days, 30 days, or permanently; revoke them and review when they were last viewed |
+| **Workspace accounts** | Require login for the private workspace, manage admin/viewer accounts, and revoke sessions and links when disabling an account |
+| **Open source** | Find creator credits, community acknowledgments, source, license, and contribution links inside the app |
 
 The app observes Redis. It does not trigger failovers, restart services, change
 Redis configuration, or manage Redis Cluster hash slots.
+
+## Workspace screenshots
+
+These screenshots come from the built-in demo. Addresses, metrics, and profile
+information are sample values; no live infrastructure or bearer URLs are shown.
+
+<details>
+<summary><strong>Overview — health and the signals that need attention</strong></summary>
+<p align="center"><img src="docs/assets/demo-overview.png" alt="Overview page showing cluster summary cards, an All clear health panel, quick links, and recent cluster events." width="100%"></p>
+</details>
+
+<details>
+<summary><strong>Share links — one cluster, selected permissions, and an expiry</strong></summary>
+<p align="center"><img src="docs/assets/demo-sharing.png" alt="Share links page with a one-hour expiry, independent configuration and log permissions, and a list of revocable temporary and permanent links." width="100%"></p>
+</details>
+
+<details>
+<summary><strong>Your profile — identity, preferences, and session security</strong></summary>
+<p align="center"><img src="docs/assets/demo-profile.png" alt="Profile page with sample display name, contact email, team, timezone, biography, password controls, and active sessions." width="100%"></p>
+</details>
 
 ## Quick start
 
@@ -108,11 +136,51 @@ It makes no Redis or SSH connections. Login is required in demo mode too.
 
 ### Explore the topology
 
-Select a Redis node to inspect its configuration, replication status, and storage.
-Use **+** and **−** to zoom, scroll to explore the enlarged graph, and choose
-**Fit** to see the whole group again. Polling preserves your zoom and scroll
-position; a master promotion or a change in group membership fits the new layout
-automatically.
+Open **Live cluster** from the navigation menu. Select a Redis node to inspect
+its configuration, replication status, and storage.
+Drag the canvas with the hand cursor to pan, or drag individual nodes to rearrange
+them; replication links follow immediately. Scroll the mouse wheel, hold **Ctrl**
+and scroll, or pinch a trackpad to zoom at the cursor. Use **+** and **−** to zoom, **Fit** to
+see every node, and **Reset** to restore the automatic layout. The fullscreen icon
+expands the graph; use it again or press **Escape** to exit.
+
+Open the download icon to save the complete map as **SVG**, **PNG**, or **PDF**.
+Downloads preserve the current node positions and include nodes outside the visible
+area, replication links, status, and a timestamp. SVG is a standalone vector image;
+PNG is a high-resolution image, and PDF fits the snapshot onto one page.
+
+The lock icon holds the current camera and node positions while metrics, roles,
+and links keep updating. Unlock it to pan, zoom, or move nodes again. Polling
+preserves custom positions for each cluster while you navigate in the current tab.
+With the graph focused, arrow keys pan; **Alt + arrow keys** move a focused node.
+Without a custom layout or lock, topology changes fit the new layout automatically.
+
+### A workspace with focused pages
+
+**Overview** highlights health and the signals that need attention. **Instances**
+lets you filter by name, address, role, or availability. **Live logs** keeps your
+selected instance in focus, and **Activity** filters discovery, outages, recoveries,
+warnings, and promotions for the selected cluster. Navigation preserves the selected
+cluster and instance.
+
+Use **Your profile** to update your display name, username, email, team, biography,
+and timezone. Changing your username requires your current password. Changing your
+password signs out all sessions; you can also sign out just your other sessions.
+
+### Share one cluster
+
+Open **Share links**, name the link, choose a cluster, and set an expiry: 15 minutes,
+1 hour, 24 hours, 7 days, 30 days, or never. The default is one hour with topology
+and health only. Enable configuration, logs, server/storage details, and activity
+independently. Copy the generated URL when it appears; it is displayed only once.
+
+Recipients do not need an account. The server checks the link, its expiry, its
+permissions, and its cluster on every page and data request. Revocation stops new
+reads and clears an open shared view on its next poll. Permanent links stay active
+until revoked or the owner's account is disabled. Every shared view is read only.
+Anyone with the URL can use it within its permissions, so share it with the intended
+audience. See the [configuration guide](docs/configuration.md#viewing-links) for
+deployment details.
 
 <p align="center">
   <img src="docs/assets/topology.svg" alt="Radial topology illustration with one master at the center and six replicas arranged around it, with fit and zoom controls." width="100%">
@@ -253,13 +321,17 @@ and entry points. Existing `python app.py` commands continue to work.
 ```bash
 python -m unittest discover -s tests -v
 node --check sentinel_atlas/static/app.js
+node --check sentinel_atlas/static/workspace.js
+node --check sentinel_atlas/static/graph-export.js
 node tests/test_ui.js
 ```
 
-The suite covers authentication, CSRF, account persistence, session revocation,
-standalone monitoring, independent groups, server probes, topology changes,
-log limits, and credential filtering. UI checks cover radial layouts from 1 to
-100 nodes, fit and zoom, failover, and view preservation during polling.
+The suite covers authentication, CSRF, profiles, account persistence, session
+revocation, share-link expiry and permissions, cluster isolation, standalone
+monitoring, server probes, topology changes, log limits, and credential filtering.
+UI checks cover radial layouts from 1 to 100 nodes, cursor-anchored wheel/Ctrl zoom,
+dragging with live links, view locking, fullscreen, exports, failover, and view
+preservation during polling.
 The optional Ansible test skips when its
 dependencies are absent.
 
@@ -280,3 +352,13 @@ inventory details.
 ## License
 
 See [LICENSE](LICENSE) for the GNU General Public License, version 2.
+
+## Creator & community
+
+Created and maintained by **Ali Sharify** — [@alisharify7](https://github.com/alisharify7)
+on GitHub and [ali-sharify.ir](https://ali-sharify.ir) on the web.
+
+Thank you to the open source community and the maintainers of Python, Redis,
+Flask, SQLAlchemy, redis-py, Waitress, Psycopg, PyYAML, python-dotenv, and tzdata.
+Bug reports, documentation, reviews, and focused code contributions are welcome.
+See [CONTRIBUTING.md](CONTRIBUTING.md), or visit **About & open source** in the app.

@@ -9,7 +9,8 @@ sentinel-atlas/
 │   ├── __main__.py               # python -m sentinel_atlas
 │   ├── cli.py                    # Waitress server and CLI lifecycle
 │   ├── web.py                    # Flask routes and application factory
-│   ├── auth.py                   # Login, CSRF, account management
+│   ├── auth.py                   # Login, CSRF, profiles, account management
+│   ├── sharing.py                # Revocable scoped public views
 │   ├── database.py               # SQLite/PostgreSQL account models
 │   ├── paths.py                  # Resource, .env, and instance paths
 │   ├── settings.py               # External connection settings
@@ -72,6 +73,8 @@ change. Environment variables continue to override `.env` values.
 ```bash
 python -m unittest discover -s tests -v
 node --check sentinel_atlas/static/app.js
+node --check sentinel_atlas/static/workspace.js
+node --check sentinel_atlas/static/graph-export.js
 node tests/test_ui.js
 # Optional Docker-backed service checks:
 python tests/integration.py
@@ -87,3 +90,10 @@ The integration scripts create only temporary test resources.
 keep it stdlib-only. The Ansible callback is loaded outside normal package import
 flow and must only emit whitelisted public data. Keep credentials out of task
 arguments, HTTP responses, Docker layers, and committed configuration files.
+
+Monitoring pages render through `workspace.html` and small panel templates. Keep
+page-specific scripts tolerant of absent panels, and avoid fetching logs outside
+the Logs page. Profiles and viewing links live in new tables so existing account
+and login-session schemas do not require destructive changes. Public share routes
+apply a separate response allowlist and check permissions and cluster membership
+on every request. `tests/test_sharing.py` covers these boundaries.

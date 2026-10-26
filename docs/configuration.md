@@ -64,10 +64,13 @@ environment settings does **not** reset existing passwords or recreate disabled
 users. The initial account is an administrator.
 
 Use **Accounts** to create viewers or other administrators and enable/disable
-accounts. Disabling an account revokes its existing sessions. All active accounts
+accounts. Disabling an account revokes its existing sessions and viewing links. All active accounts
 can view every configured cluster and its logs; administrators additionally
-manage accounts. Use your account name in the header to change your password,
-which signs out all your sessions. There is no public self-registration.
+manage accounts. **Your profile** supports display name, contact email, team,
+biography, timezone, username changes (with current-password verification), password
+changes, and signing out other sessions. Password changes sign out all your sessions.
+Profile email is contact information, not an email-based recovery mechanism.
+There is no public self-registration.
 
 SQLite works without an external database server. Its default file is
 `instance/atlas.sqlite` beside the app. To use a different SQLite file:
@@ -84,8 +87,9 @@ DATABASE_URL=postgresql+psycopg://atlas:your-database-password@127.0.0.1:5432/at
 ```
 
 Plain `postgresql://` and `postgres://` URLs are also accepted and use psycopg 3.
-Initial tables are created automatically. The database stores **accounts, session
-records, and login throttles**. Live metrics, log tails, and events remain bounded
+Initial tables are created automatically, including additive profile and viewing-link
+tables for existing installations. The database stores **accounts, profiles, session
+records, login throttles, and viewing links**. Live metrics, log tails, and events remain bounded
 in-memory observations; they are not a historical monitoring database. Switching
 database URLs does not migrate accounts; an empty database bootstraps a new admin.
 
@@ -96,6 +100,33 @@ the same account database. SQLite files, instance keys, `.env`, inventories, and
 credentials must stay out of Git. For HTTPS deployments set
 `SESSION_COOKIE_SECURE=true`; use a production WSGI server and TLS reverse proxy.
 Keep one monitor worker per process; each process collects its own observations.
+
+### Viewing links
+
+Signed-in accounts can create links at `/shares`. Each link is fixed to one
+monitored cluster, with topology and health included. Configuration, logs,
+server/storage details, and activity are separate optional permissions. Restricted
+fields are removed from public API responses. Shared log reads validate that the
+instance still belongs to the link's cluster; a removed cluster never falls back
+to another cluster.
+
+Expiry choices are 15 minutes, 1 hour (default), 24 hours, 7 days, 30 days, and
+permanent. Owners can revoke their own links. Disabling an owner revokes their
+links permanently, including after the account is re-enabled. Password changes
+revoke account sessions; viewing links remain separately managed on the sharing page.
+
+The 64-character random bearer token is generated from 48 random bytes. Only its
+SHA-256 digest is stored in the database. The full URL appears once after creation;
+copy it then, or create a replacement. Every shared request checks owner status,
+expiry, revocation, permissions, and cluster membership. Viewers cannot trigger
+collection, manage accounts, or create links. The read-only viewer still supports
+local graph movement and SVG/PNG/PDF downloads of its permitted graph data.
+
+Treat viewing URLs as credentials. Deploy behind HTTPS, avoid recording `/s/…`
+tokens in reverse-proxy access logs, and share URLs only with the intended audience.
+Shared responses disable caching and indexing and set `Referrer-Policy: no-referrer`.
+The browser clears an open shared view when a subsequent poll loses access;
+revocation cannot erase data someone already downloaded.
 
 ## Redis Sentinel, replication, and multiple clusters
 
