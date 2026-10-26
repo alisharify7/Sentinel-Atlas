@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "sentinel-atlas"
 version = "0.1.0"
 description = "An authenticated Redis and Sentinel observatory"
+authors = [{name = "Ali Sharify"}]
 readme = "README.md"
 requires-python = ">=3.12"
 license = "GPL-2.0-only"
@@ -13,6 +14,7 @@ license-files = ["LICENSE"]
 dynamic = ["dependencies", "optional-dependencies"]
 
 [project.urls]
+Homepage = "https://ali-sharify.ir"
 Repository = "https://github.com/alisharify7/Sentinel-Atlas"
 Issues = "https://github.com/alisharify7/Sentinel-Atlas/issues"
 

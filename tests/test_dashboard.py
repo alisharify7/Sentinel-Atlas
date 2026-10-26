@@ -219,7 +219,7 @@ class BoundaryTests(unittest.TestCase):
     def test_api_and_assets_work_without_external_project(self):
         client=logged_in_client(DemoMonitor())
         self.addCleanup(client.application.extensions['accounts'].engine.dispose)
-        for path in ('/','/static/app.css','/static/app.js','/static/observatory.css','/api/cluster'):
+        for path in ('/','/static/app.css','/static/app.js','/static/graph-export.js','/static/workspace.js','/static/workspace.css','/static/observatory.css','/api/cluster'):
             with self.subTest(path=path):
                 response=client.get(path)
                 self.assertEqual(response.status_code,200)

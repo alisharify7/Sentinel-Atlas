@@ -47,8 +47,8 @@ class ClusterState:
         self.duration = 0
         self.lock = threading.RLock()
 
-    def event(self, kind, message, now):
-        self.events.insert(0, {'id': f'{now}-{len(self.events)}', 'kind': kind, 'message': message, 'time': now})
+    def event(self, kind, message, now, cluster=None):
+        self.events.insert(0, {'id': f'{now}-{len(self.events)}', 'kind': kind, 'message': message, 'time': now, 'cluster': cluster})
         self.events = self.events[:60]
 
     def apply(self, records, error=None, duration=0, now=None):
@@ -84,9 +84,9 @@ class ClusterState:
                 node['last_role'] = node['redis'].get('role') if node['redis'].get('up') else old.get('last_role')
                 before, after = old.get('redis', {}).get('up'), node['redis'].get('up', False)
                 if old and before != after:
-                    self.event('recovery' if after else 'down', f'{name} Redis is {"reachable again" if after else "unavailable"}.', now)
+                    self.event('recovery' if after else 'down', f'{name} Redis is {"reachable again" if after else "unavailable"}.', now, metadata.get('cluster', 'redis'))
                 if not old:
-                    self.event('info', f'{name} discovered · {"online" if after else "unreachable"}.', now)
+                    self.event('info', f'{name} discovered · {"online" if after else "unreachable"}.', now, metadata.get('cluster', 'redis'))
                 hw, previous = node['hardware'], old.get('hardware', {})
                 delta = hw.get('cpu_total', 0) - previous.get('cpu_total', 0)
                 hw['cpu_percent'] = round(max(0, min(100, 100 * (1 - (hw.get('cpu_idle', 0) - previous.get('cpu_idle', 0)) / delta))), 1) if reachable and delta > 0 and previous else None
@@ -100,7 +100,7 @@ class ClusterState:
                 if len(masters) == 1:
                     previous = self.last_masters.get(cluster)
                     if previous and previous != masters[0]:
-                        self.event('promotion', f'{masters[0]} is the new master · previously {previous}.', now)
+                        self.event('promotion', f'{masters[0]} is the new master · previously {previous}.', now, cluster)
                     self.last_masters[cluster] = self.last_master = masters[0]
 
     def log_snapshot(self, name, service):
@@ -157,7 +157,7 @@ class ClusterState:
                     'consensus': consensus, 'clients': sum(n['redis'].get('clients', 0) for n in redis_nodes),
                     'ops': sum(n['redis'].get('ops_per_second', 0) for n in redis_nodes),
                     'memory': sum(n['redis'].get('memory_used', 0) for n in redis_nodes)},
-                'nodes': nodes, 'events': copy.deepcopy(self.events)}
+                'nodes': nodes, 'events': copy.deepcopy([event for event in self.events if event.get('cluster') in (None, selected_cluster)])}
 
 
 class LiveMonitor(ClusterState):

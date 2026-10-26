@@ -7,7 +7,14 @@ const vm = require('node:vm');
 const elements = new Map();
 const listeners = {};
 function element(id) {
-  return {id, dataset:{}, style:{}, clientWidth:800, children:[], scrollTop:0, _html:'', textContent:'',
+  const classes=new Set(), handlers={};
+  return {id, dataset:{}, style:{}, clientWidth:800, clientHeight:800, children:[], scrollTop:0, scrollLeft:0, _html:'', textContent:'',
+    classList:{contains:name=>classes.has(name),add:name=>classes.add(name),remove:name=>classes.delete(name),toggle(name,on){if(on??!classes.has(name))classes.add(name);else classes.delete(name);}},
+    addEventListener(type,handler) {handlers[type]=handler;},
+    dispatch(type,values={}) {const event={button:0,pointerId:1,clientX:0,clientY:0,target:this,preventDefault(){this.prevented=true;},stopPropagation(){this.stopped=true;},...values};handlers[type]?.(event);return event;},
+    closest(selector) {return selector==='.node-card'&&this.dataset.node?this:null;},
+    getBoundingClientRect() {return {left:0,top:0};},
+    setPointerCapture(id) {this.capture=id;},hasPointerCapture(id) {return this.capture===id;},releasePointerCapture() {this.capture=null;},
     get innerHTML() { return this._html; },
     set innerHTML(value) {
       this._html=value;
@@ -26,24 +33,26 @@ function element(id) {
     contains(target) { return this.children.includes(target); },
     querySelectorAll(selector) { return this.children.filter(child=>selector==='[data-node]'?child.dataset.node:child.dataset.tab); },
     setAttribute(name,value) { this[name]=value; },
+    removeAttribute(name) { delete this[name]; },
     focus() { document.activeElement=this; },
     setSelectionRange(start,end) { this.selectionStart=start;this.selectionEnd=end; },
     scrollIntoView() { this.scrolled=true; }
   };
 }
-const document={activeElement:null,getElementById:id=>elements.get(id)||null,addEventListener:(kind,fn)=>listeners[kind]=fn};
-for (const id of ['inspector','graphContainer','graphEmpty','graphNodes','graphLines','topologyStats','sentinelNetwork','fleetBody','graphToolbar','graphViewport','graphStage','graphScene','graphZoom','graphZoomIn','graphZoomOut']) elements.set(id,element(id));
+const document={activeElement:null,body:element('body'),getElementById:id=>elements.get(id)||null,addEventListener:(kind,fn)=>listeners[kind]=fn};
+for (const id of ['inspector','graphContainer','graphEmpty','graphNodes','graphLines','topologyStats','sentinelNetwork','fleetBody','graphToolbar','graphViewport','graphStage','graphScene','graphZoom','graphZoomIn','graphZoomOut','graphFit','graphReset','graphLock','graphHint','graphFullscreen','graphExport','graphExportStatus']) elements.set(id,element(id));
 let mobile=false;
-const context=vm.createContext({document,Intl,console,window:{matchMedia:()=>({matches:mobile})}});
+const context=vm.createContext({document,Intl,console,setTimeout,Blob,TextEncoder,window:{matchMedia:()=>({matches:mobile})}});
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../sentinel_atlas/static/graph-export.js'),'utf8'),context);
 const source=fs.readFileSync(path.join(__dirname,'../sentinel_atlas/static/app.js'),'utf8');
 const clickStart=source.indexOf("document.addEventListener('click'");
 vm.runInContext(source.slice(0,clickStart),context);
 vm.runInContext('syncLogControls=()=>{};',context);
-vm.runInContext(source.slice(clickStart,source.indexOf("document.addEventListener('keydown'")),context);
+vm.runInContext(source.slice(clickStart,source.indexOf("document.addEventListener('keydown'",clickStart)),context);
 const run=code=>vm.runInContext(code,context);
 const node=(name,role)=>({name,metadata:{name,cluster:'main',redis_member:true,sentinel_member:true,address:name,redis_port:6379,sentinel_port:26379,deployment:'direct'},redis:{up:true,role,upstream:role==='replica'?'primary':null,upstream_port:6379,link:'up',config_status:'ok',configuration:{timeout:name==='primary'?'10':'20',save:''}},sentinel:{up:true,quorum_ok:true,master_ip:'primary',master_port:6379,required_quorum:2,other_sentinels:2,known_replicas:2,flags:'master'},history:[],hardware:{},container:{},storage:[]});
 const initial={master:'primary',summary:{redis_up:3,redis_total:3,ops:1200,memory:1024,consensus:true},nodes:[node('primary','master'),node('replica-a','replica'),node('replica-b','replica')]};
-const reset=()=>{document.activeElement=null;run(`state=${JSON.stringify(initial)};selected='primary';selectedTab='overview';configFilter='';`);};
+const reset=()=>{document.activeElement=null;run(`state=${JSON.stringify(initial)};selected='primary';selectedTab='overview';configFilter='';graphLayouts.clear();graphView.key='';graphView.locked=false;`);};
 function assertLayout(width,count=3) {
   elements.get('graphContainer').clientWidth=width;
   run('renderGraph()');
@@ -108,6 +117,104 @@ const click=async (name,tab)=>listeners.click({target:{closest:selector=>selecto
   assert.equal(elements.get('graphZoomOut').disabled,true);
   for(let i=0;i<40;i++) await graphClick('in');
   assert.ok(run('graphView.fit*graphView.zoom')<=1.5+.0001);
+  // Pointer movement pans even at Fit, and dragging a node updates links immediately.
+  reset();run('renderGraph();bindGraphInteractions();');
+  const viewport=elements.get('graphViewport');
+  const wheelScale=run('graphView.scale');
+  const anchorBefore=run('[(130+$("graphViewport").scrollLeft-graphView.x)/graphView.scale,(60+$("graphViewport").scrollTop-graphView.y)/graphView.scale]');
+  const wheel=viewport.dispatch('wheel',{deltaY:-120,clientX:130,clientY:60});
+  assert.equal(wheel.prevented,true,'Wheel zoom must consume scrolling within the map');
+  assert.ok(run('graphView.scale')>wheelScale);
+  const anchorAfter=run('[(130+$("graphViewport").scrollLeft-graphView.x)/graphView.scale,(60+$("graphViewport").scrollTop-graphView.y)/graphView.scale]');
+  assert.ok(anchorAfter.every((value,i)=>Math.abs(value-anchorBefore[i])<1e-8),'Wheel zoom keeps the cursor anchored to the same graph point');
+  const ctrlScale=run('graphView.scale');
+  viewport.dispatch('wheel',{deltaY:-2,ctrlKey:true,clientX:130,clientY:60});
+  assert.ok(run('graphView.scale')>ctrlScale,'Ctrl+wheel and trackpad pinch zoom the graph');
+  viewport.dispatch('wheel',{deltaY:1000,deltaMode:1,clientX:130,clientY:60});
+  assert.ok(run('graphView.scale')>=run('graphView.fit'),'Zoom out keeps every node accessible at Fit');
+  await graphClick('fit');
+  const panBefore=run('graphView.panX');
+  viewport.dispatch('pointerdown',{clientX:10,clientY:10});
+  viewport.dispatch('pointermove',{clientX:100,clientY:60});
+  assert.equal(run('graphView.panX'),panBefore+90);
+  viewport.dispatch('pointerup');
+  const suppressed=viewport.dispatch('click');
+  assert.equal(suppressed.stopped,true,'Dragging must not open the inspector');
+  run('renderGraph()');
+  assert.equal(run('graphView.panX'),panBefore+90,'Polling must preserve pan');
+  const card=elements.get('graphNodes').children.find(n=>n.dataset.node==='replica-a');
+  const before=run("({...graphLayout.positions.get('replica-a')})"),scaleBefore=run('graphView.scale');
+  const links=elements.get('graphLines').innerHTML;
+  viewport.dispatch('pointerdown',{target:card,clientX:100,clientY:100});
+  viewport.dispatch('pointermove',{clientX:150,clientY:130});
+  assert.ok(Math.abs(run("graphLayout.positions.get('replica-a').x")-before.x-50/scaleBefore)<.001);
+  assert.notEqual(elements.get('graphLines').innerHTML,links,'Links must follow the node before pointerup');
+  run('renderGraph()');
+  viewport.dispatch('pointermove',{clientX:160,clientY:140});
+  viewport.dispatch('pointerup');
+  const moved=run("JSON.stringify(graphLayout.positions.get('replica-a'))");
+  run('renderGraph()');
+  assert.equal(run("JSON.stringify(graphLayout.positions.get('replica-a'))"),moved,'Polling must retain custom positions');
+  viewport.dispatch('pointerdown',{target:elements.get('graphNodes').children[0]});
+  viewport.dispatch('pointermove',{clientX:2,clientY:1});
+  viewport.dispatch('pointerup');
+  assert.equal(run('graphGesture'),null,'A click must finish without moving a node');
+  viewport.dispatch('pointerdown');
+  listeners.pointerup({pointerId:1});
+  assert.equal(run('graphGesture'),null,'Releasing outside the viewport must finish the gesture');
+  viewport.dispatch('pointerdown');viewport.dispatch('pointermove',{clientX:10,clientY:20});viewport.dispatch('pointercancel');
+  assert.equal(viewport.classList.contains('is-dragging'),false,'Cancelled gestures must restore the cursor');
+  const keyboardNode=elements.get('graphNodes').children.find(n=>n.dataset.node==='replica-a');
+  const keyboardX=run("graphLayout.positions.get('replica-a').x");
+  viewport.dispatch('keydown',{target:keyboardNode,key:'ArrowRight',altKey:true});
+  assert.equal(run("graphLayout.positions.get('replica-a').x"),keyboardX+20,'Nodes can be repositioned with the keyboard');
+  // Lock freezes the camera and layout across role, size, and membership changes.
+  await graphClick('lock');
+  const lockedCamera=run('JSON.stringify([graphView.x,graphView.y,graphView.scale])');
+  const lockedPosition=run("JSON.stringify(graphLayout.positions.get('primary'))");
+  await graphClick('in');await graphClick('fit');await graphClick('reset');
+  viewport.dispatch('pointerdown');viewport.dispatch('pointermove',{clientX:500});viewport.dispatch('pointerup');
+  assert.equal(viewport.dispatch('wheel').prevented,true);
+  elements.get('graphContainer').clientWidth=900;
+  run("state.nodes[0].redis.role='replica';state.nodes[1].redis.role='master';state.nodes.push({...state.nodes[2],name:'new-replica'});renderGraph();");
+  assert.equal(run('JSON.stringify([graphView.x,graphView.y,graphView.scale])'),lockedCamera);
+  assert.equal(run("JSON.stringify(graphLayout.positions.get('primary'))"),lockedPosition);
+  assert.equal(elements.get('graphLock')['aria-pressed'],'true');
+  assert.match(elements.get('graphNodes').innerHTML,/new-replica/,'Locked graphs still receive live changes');
+  await graphClick('lock');await graphClick('reset');
+  assert.equal(run('graphLayouts.get(state.cluster).size'),0);
+  assert.equal(run('graphView.zoom'),1);
+  // Moving beyond the old scene stays finite and Fit includes the new position.
+  run("moveGraphNode('replica-a',-1000,-800);renderGraph();");
+  await graphClick('fit');
+  assert.ok(run('graphView.minX')<0);
+  assert.doesNotMatch(elements.get('graphLines').innerHTML,/NaN|Infinity/);
+  const snapshot=run('graphExportSnapshot()');
+  assert.match(snapshot.svg,/translate\(-1000,-800\)/,'Downloads include nodes moved outside the original scene');
+  assert.equal((snapshot.svg.match(/<title>/g)||[]).length,4,'Every node appears in the exported map');
+  assert.doesNotMatch(snapshot.svg,/animateMotion|foreignObject|<script/,'SVGs must work without the dashboard or animations');
+  assert.ok(snapshot.width>1000&&snapshot.height>800);
+  const cameraBeforeDownload=run('JSON.stringify(graphView)');
+  run('graphExportSnapshot()');
+  assert.equal(run('JSON.stringify(graphView)'),cameraBeforeDownload,'Exporting does not change the view');
+  run('state.cluster=\'Cache <prod> & "east"\';');
+  const escapedSnapshot=run('graphExportSnapshot()');
+  assert.match(escapedSnapshot.svg,/Cache &lt;prod&gt; &amp; &quot;east&quot;/);
+  assert.match(escapedSnapshot.filename,/^Cache-prod-east-topology-/,'Downloads use safe filenames');
+  run('state.cluster=undefined;');
+  run("{const p=graphLayout.positions.get('primary');moveGraphNode('replica-a',p.x,p.y);}");
+  assert.doesNotMatch(elements.get('graphLines').innerHTML,/NaN|Infinity/,'Overlapping nodes must not produce invalid links');
+  await graphClick('fullscreen');
+  assert.equal(elements.get('graphContainer').classList.contains('graph-expanded'),true);
+  assert.equal(elements.get('graphFullscreen')['aria-pressed'],'true');
+  await graphClick('fullscreen');
+  assert.equal(elements.get('graphContainer').classList.contains('graph-expanded'),false);
+  elements.get('graphContainer').requestFullscreen=async()=>{document.fullscreenElement=elements.get('graphContainer');listeners.fullscreenchange();};
+  document.exitFullscreen=async()=>{document.fullscreenElement=null;listeners.fullscreenchange();};
+  await graphClick('fullscreen');
+  assert.equal(elements.get('graphFullscreen')['aria-label'],'Exit fullscreen');
+  await document.exitFullscreen();
+  assert.equal(elements.get('graphFullscreen')['aria-pressed'],'false','Browser Escape must update the fullscreen control');
   // A promotion recenters the new master; conflicts never choose an arbitrary hub.
   reset();
   run("state.nodes[0].redis.role='replica';state.nodes[1].redis.role='master';state.master='replica-a';renderGraph();");
@@ -159,6 +266,8 @@ const click=async (name,tab)=>listeners.click({target:{closest:selector=>selecto
   assert.equal(elements.get('graphNodes').children.length,0);
   assert.equal(elements.get('graphToolbar').hidden,true);
   assert.equal(elements.get('graphViewport').hidden,true);
+  assert.equal(elements.get('graphExport').hidden,true);
+  assert.throws(()=>run('graphExportSnapshot()'),/no Redis nodes/);
   assert.match(elements.get('inspector').innerHTML,/Inspect an instance/);
-  console.log('UI checks passed: centered radial topology (1–100 nodes), responsive fit/zoom, polling view preservation, failover, Sentinel consensus/failures, configuration selection/search, mobile navigation, and observed replication links.');
+  console.log('UI checks passed: radial topology (1–100 nodes), fit/zoom, canvas and node dragging, live links, keyboard movement, view lock, fullscreen, polling preservation, failover, Sentinel health, configuration inspection, and mobile navigation.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

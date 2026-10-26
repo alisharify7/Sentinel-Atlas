@@ -4,6 +4,7 @@ import re
 import secrets
 import time
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, create_engine, delete, select, update
 from sqlalchemy.engine import make_url
@@ -38,6 +39,33 @@ class LoginThrottle(Base):
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     expires_at: Mapped[float] = mapped_column(Float)
+
+
+class UserProfile(Base):
+    __tablename__ = 'user_profiles'
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id'), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(100), default='')
+    email: Mapped[str] = mapped_column(String(254), default='')
+    organization: Mapped[str] = mapped_column(String(100), default='')
+    timezone: Mapped[str] = mapped_column(String(64), default='UTC')
+    bio: Mapped[str] = mapped_column(String(500), default='')
+
+
+class ShareLink(Base):
+    __tablename__ = 'share_links'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey('users.id'), index=True)
+    label: Mapped[str] = mapped_column(String(100))
+    cluster: Mapped[str] = mapped_column(String(1024))
+    allow_config: Mapped[bool] = mapped_column(Boolean, default=False)
+    allow_logs: Mapped[bool] = mapped_column(Boolean, default=False)
+    allow_details: Mapped[bool] = mapped_column(Boolean, default=False)
+    allow_events: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[float] = mapped_column(Float, default=time.time)
+    expires_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    revoked_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_used_at: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 def digest(value):
@@ -157,3 +185,48 @@ class AccountStore:
                 raise ValueError('Account not found.')
             user.active = not user.active
             db.execute(delete(LoginSession).where(LoginSession.user_id == user_id))
+            if not user.active:
+                db.execute(update(ShareLink).where(ShareLink.owner_id == user_id, ShareLink.revoked_at.is_(None)).values(revoked_at=time.time()))
+
+    def profile(self, user_id):
+        with self.session() as db:
+            return db.get(UserProfile, user_id) or UserProfile(user_id=user_id, display_name='', email='', organization='', timezone='UTC', bio='')
+
+    def update_profile(self, user_id, username, values, current_password=''):
+        validate_account(username, 'profile-validation')
+        limits = {'display_name': 100, 'email': 254, 'organization': 100, 'timezone': 64, 'bio': 500}
+        fields = {key: str(values.get(key, '')).strip() for key in limits}
+        fields['timezone'] = fields['timezone'] or 'UTC'
+        if any(len(fields[key]) > limit for key, limit in limits.items()):
+            raise ValueError('A profile field exceeds its maximum length.')
+        if fields['email'] and not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', fields['email']):
+            raise ValueError('Enter a valid email address.')
+        try:
+            ZoneInfo(fields['timezone'])
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError('Enter a valid IANA timezone, such as UTC or Asia/Tehran.') from None
+        with self.session.begin() as db:
+            user = db.get(User, user_id)
+            if username != user.username:
+                if not check_password_hash(user.password_hash, current_password):
+                    raise ValueError('Your current password is required to change your username.')
+                if db.scalar(select(User.id).where(User.username == username, User.id != user_id)):
+                    raise ValueError('That account name is already in use.')
+                user.username = username
+            profile = db.get(UserProfile, user_id)
+            if not profile:
+                profile = UserProfile(user_id=user_id)
+                db.add(profile)
+            for key, value in fields.items():
+                setattr(profile, key, value)
+
+    def active_sessions(self, user_id, current_token):
+        with self.session() as db:
+            return [{'current': row.token_hash == digest(current_token), 'expires_at': row.expires_at}
+                    for row in db.scalars(select(LoginSession).where(LoginSession.user_id == user_id,
+                        LoginSession.expires_at > time.time()).order_by(LoginSession.expires_at.desc()))]
+
+    def revoke_other_sessions(self, user_id, current_token):
+        with self.session.begin() as db:
+            db.execute(delete(LoginSession).where(LoginSession.user_id == user_id,
+                LoginSession.token_hash != digest(current_token)))

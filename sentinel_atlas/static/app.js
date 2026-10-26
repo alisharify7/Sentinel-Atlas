@@ -28,14 +28,24 @@ const online = n => n.metadata.redis_member ? !!n.redis.up : !!n.sentinel.up;
 const role = n => !online(n) ? 'down' : n.metadata.redis_member ? ['master','replica'].includes(n.redis.role) ? n.redis.role : 'unknown' : 'sentinel';
 const badge = n => `<span class="role-badge ${role(n)}">${role(n) === 'down' ? 'unavailable' : esc(role(n))}</span>`;
 const detail = (label, value, mono=false) => `<div class="detail-row"><span>${esc(label)}</span><strong class="${mono?'mono':''}">${esc(value ?? '—')}</strong></div>`;
+const pageContext=document.body?.dataset||{}, sharedView=pageContext.shared==='true';
+const canConfigure=pageContext.config!=='false',canSeeDetails=pageContext.details!=='false';
+const initialQuery=typeof URLSearchParams!=='undefined'?new URLSearchParams(window.location?.search||''):null;
 function meter(label, value, total) {
   const p = percent(value,total);
   return `<div class="metric-label"><span>${esc(label)}</span><strong>${bytes(value)} / ${bytes(total)}</strong></div><div class="meter"><span class="${p>90?'danger':p>75?'warn':''}" style="width:${p}%"></span></div>`;
 }
-let state = null, selected = null, selectedTab = 'overview', configFilter = '', scenario = 'healthy', activeCluster='', lastRender = null, serverConnected = false;
+let state = null, selected = initialQuery?.get('node')||null, selectedTab = 'overview', configFilter = '', scenario = 'healthy', activeCluster=initialQuery?.get('cluster')||'', lastRender = null, serverConnected = false, accessLost=false;
 
 async function apiFetch(url, options) {
+  if(sharedView&&url.startsWith('/api/'))url=(pageContext.apiBase||'/api')+url.slice(4);
   const response=await fetch(url,options);
+  if(sharedView&&[403,404].includes(response.status)) {
+    accessLost=true;
+    $('mainContent')?.replaceChildren();
+    location.reload();
+    throw Error('Viewing link unavailable');
+  }
   if(response.status===401){location.assign('/login?next='+encodeURIComponent(location.pathname));throw Error('Login required');}
   return response;
 }
@@ -44,12 +54,15 @@ function render(data) {
   state = data;
   activeCluster=data.cluster;
   const clusterSelect=$('clusterSelect'), clusters=data.clusters || [data.cluster];
-  if([...clusterSelect.options].map(option=>option.value).join('|')!==clusters.join('|'))clusterSelect.replaceChildren(...clusters.map(name=>new Option(name,name)));
-  clusterSelect.value=activeCluster;clusterSelect.hidden=clusters.length<2;
+  if(clusterSelect) {
+    if([...clusterSelect.options].map(option=>option.value).join('|')!==clusters.join('|'))clusterSelect.replaceChildren(...clusters.map(name=>new Option(name,name)));
+    clusterSelect.value=activeCluster;clusterSelect.hidden=clusters.length<2;
+  }
   const s = data.summary;
   const master = data.nodes.find(n => n.name === data.master);
-  $('demoControls').hidden = data.mode !== 'demo';
+  if($('demoControls')) $('demoControls').hidden = data.mode !== 'demo';
   const health = {healthy:'Healthy', degraded:'Degraded', offline:'Offline', loading:'Discovering'}[data.status] || 'Unknown';
+  if($('healthCard')) {
   $('healthCard').dataset.status = data.status;
   $('healthValue').innerHTML = `${health}<span class="dot ${data.status==='healthy'?'':data.status==='loading'?'muted':data.status==='degraded'?'amber':'red'}"></span>`;
   $('healthFoot').textContent = data.status==='healthy' ? 'All instances reporting normally' : data.status==='loading' ? 'Reading inventory and connecting' : data.master_count>1 ? 'Multiple masters observed' : !data.master ? 'No current master observed' : 'Some instances need attention';
@@ -61,10 +74,11 @@ function render(data) {
   $('quorumFoot').textContent = s.consensus ? 'In agreement on the current master' : s.sentinel_total ? 'Waiting for consensus' : 'Sentinel is not configured';
   $('masterValue').textContent = data.master || (data.master_count>1 ? 'Conflict' : '—');
   $('masterFoot').textContent = master ? endpoint(master) : 'No single master observed';
-  $('clusterName').textContent = data.cluster;
-  $('pollStatus').textContent = `Every ${data.poll_interval}s · ${data.poll_duration}s collection`;
-  $('fleetCount').textContent = `${data.nodes.length} instances`;
+  }
+  if($('clusterName')) $('clusterName').textContent = data.cluster;
+  if($('pollStatus')) $('pollStatus').textContent = `Every ${data.poll_interval}s · ${data.poll_duration}s collection`;
   if (!data.nodes.some(n => n.name===selected)) selected = data.master || data.nodes[0]?.name;
+  if(typeof syncWorkspaceLocation==='function'&&!sharedView)syncWorkspaceLocation(activeCluster,selected);
   const notice = data.error || (data.mode==='demo' ? 'Demo workspace · These are sample instances. No VMs are contacted.' : data.status==='offline' && data.nodes.length ? 'No Redis instances are reachable. Check that the VMs and containers are running; this view updates automatically.' : data.master_count>1 ? 'More than one Redis instance reports itself as master. Inspect the replication topology.' : '');
   $('notice').textContent = notice;
   $('notice').hidden = !notice;
@@ -73,6 +87,7 @@ function render(data) {
   renderFleet();
   renderInspector();
   renderEvents();
+  renderAttention();
   syncLogControls();
   updateTime();
 }
@@ -101,7 +116,9 @@ function replicationDetails(node) {
   return `<div class="inspector-section replication-details"><div class="detail-label">LIVE REPLICATION</div><div class="sync-overview">${syncBadge(node)}<span>${esc(view.description)}</span></div>${view.progress!=null?`<div class="sync-progress" role="progressbar" aria-label="${view.key==='loading'?'Dataset loading':'Full sync transfer'}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${view.progress}"><span style="width:${view.progress}%"></span></div>`:''}${detail('Processed offset',r.up?offset(r.replication_offset):'—',true)}${r.role==='replica'?`${detail('Upstream',sync.upstream_name||r.upstream,true)}${detail('Upstream offset',offset(sync.upstream_offset),true)}${detail('Sampled byte gap',sync.lag_bytes!=null?bytes(sync.lag_bytes):'—',true)}${detail('Master link',r.up?r.link:'—')}${detail('Last upstream I/O',r.up&&r.last_master_io!=null&&r.last_master_io>=0?`${fmt(r.last_master_io)}s ago`:'—')}${view.key==='link_down'?detail('Link down for',r.link_down_seconds!=null&&r.link_down_seconds>=0?`${fmt(r.link_down_seconds)}s`:'—'):''}`:''}<p class="muted-text">Updates every ${state.poll_interval||5}s. Offset gaps compare independent samples of the same replication stream; they are approximate under load.</p></div>`;
 }
 
-let graphView = {key:'', zoom:1, width:0, height:0, viewportWidth:0, viewportHeight:0, fit:1};
+let graphView = {key:'', cluster:null, zoom:1, width:0, height:0, viewportWidth:0, viewportHeight:0, fit:1, panX:0, panY:0, minX:0, minY:0, locked:false};
+const graphLayouts = new Map();
+let graphLayout = null, graphGesture = null, graphSuppressClick = false;
 
 function layoutGraph(nodes, masterName, cardWidth, cardHeight) {
   const positions=new Map(), master=nodes.find(n=>n.name===masterName&&n.redis.up&&n.redis.role==='master');
@@ -125,46 +142,87 @@ function layoutGraph(nodes, masterName, cardWidth, cardHeight) {
   return {positions,width,height};
 }
 
-function updateGraphView(recenter=false) {
+function updateGraphView(recenter=false, camera=null) {
   const v=graphView, scale=v.fit*v.zoom;
   const width=Math.max(v.viewportWidth,v.width*scale),height=Math.max(v.viewportHeight,v.height*scale);
   const scene=$('graphScene'), stage=$('graphStage'), viewport=$('graphViewport');
   stage.style.width=`${width}px`;stage.style.height=`${height}px`;
-  scene.style.transform=`translate(${(width-v.width*scale)/2}px,${(height-v.height*scale)/2}px) scale(${scale})`;
+  const baseX=(width-v.width*scale)/2-v.minX*scale, baseY=(height-v.height*scale)/2-v.minY*scale;
+  if(camera) {
+    v.panX=camera.x+(camera.screen?viewport.scrollLeft:0)-baseX;
+    v.panY=camera.y+(camera.screen?viewport.scrollTop:0)-baseY;
+  }
+  v.x=baseX+v.panX;v.y=baseY+v.panY;v.scale=scale;
+  scene.style.transform=`translate(${v.x}px,${v.y}px) scale(${scale})`;
   $('graphZoom').textContent=`${Math.round(scale*100)}%`;
-  $('graphZoomOut').disabled=v.zoom<=1;
-  $('graphZoomIn').disabled=scale>=1.5-.000001;
+  $('graphZoomOut').disabled=v.locked||v.zoom<=1;
+  $('graphZoomIn').disabled=v.locked||scale>=1.5-.000001;
+  $('graphFit').disabled=v.locked;
+  $('graphReset').disabled=v.locked;
+  $('graphLock').setAttribute('aria-pressed',String(v.locked));
+  $('graphLock').setAttribute('aria-label',v.locked?'Unlock view':'Lock current view');
+  $('graphLock').title=v.locked?'Unlock view':'Lock current view';
+  $('graphLock').innerHTML=icon(v.locked?'lock':'unlock');
+  $('graphViewport').classList.toggle('view-locked',v.locked);
+  $('graphHint').textContent=v.locked?'View locked · Live updates continue':'Scroll to zoom · Drag canvas or nodes to move';
   if(recenter) {viewport.scrollLeft=(width-v.viewportWidth)/2;viewport.scrollTop=(height-v.viewportHeight)/2;}
 }
 
 function renderGraph() {
-  if (!state) return;
+  if (!state||!$('graphContainer')) return;
   const nodes = state.nodes.filter(n => n.metadata.redis_member), container = $('graphContainer');
+  const fullscreen=document.fullscreenElement===container||container.classList.contains('graph-expanded');
+  const previousCamera={x:graphView.x-$('graphViewport').scrollLeft,y:graphView.y-$('graphViewport').scrollTop,screen:true};
+  if(graphView.cluster!==null&&graphView.cluster!==state.cluster) graphView.locked=false;
+  if(graphGesture&&(graphView.cluster!==state.cluster||!nodes.length||graphGesture.node&&!nodes.some(n=>n.name===graphGesture.node))) {
+    const id=graphGesture.id;
+    graphGesture=null;
+    $('graphViewport').classList.remove('is-dragging');
+    if($('graphViewport').hasPointerCapture(id)) $('graphViewport').releasePointerCapture(id);
+  }
   const focused = $('graphNodes').contains(document.activeElement) ? document.activeElement.dataset.node : null;
   const s = state.summary;
   $('topologyStats').innerHTML = `<span>${icon('server')}<strong>${fmt(s.redis_up)} / ${fmt(s.redis_total)}</strong> Redis online</span><span>${icon('chart')}<strong>${fmt(s.ops)}</strong> ops / sec</span><span>${icon('stack')}<strong>${bytes(s.memory)}</strong> memory</span>`;
   $('graphEmpty').hidden = nodes.length > 0;
-  $('graphToolbar').hidden=!nodes.length;
+  $('graphToolbar').hidden=!nodes.length&&!fullscreen;
+  $('graphExport').hidden=!nodes.length;
+  $('graphHint').hidden=!nodes.length;
   $('graphViewport').hidden=!nodes.length;
-  if (!nodes.length) { $('graphNodes').innerHTML=''; $('graphLines').innerHTML=''; container.style.height='230px'; graphView.key=''; return; }
+  if (!nodes.length) { $('graphNodes').innerHTML=''; $('graphLines').innerHTML=''; container.style.height=fullscreen?'':'230px'; graphView.key='';graphLayout=null;return; }
   const w = Math.max(1,container.clientWidth), cardHeight = 236, cardWidth = 240;
   const masters = nodes.filter(n => n.redis.up && n.redis.role==='master');
   const masterName=masters.length===1?masters[0].name:null;
-  const {positions,width,height}=layoutGraph(nodes,masterName,cardWidth,cardHeight);
-  const viewportHeight=Math.min(680,Math.max(380,Math.min(w*.78,height)));
-  container.style.height=`${viewportHeight+60}px`;
+  const automatic=layoutGraph(nodes,masterName,cardWidth,cardHeight), positions=automatic.positions;
+  const sameCluster=graphView.cluster===state.cluster;
+  if(!graphLayouts.has(state.cluster)) graphLayouts.set(state.cluster,new Map(typeof loadGraphPositions==='function'?loadGraphPositions(state.cluster):[]));
+  const custom=graphLayouts.get(state.cluster);
+  for(const name of custom.keys()) if(!positions.has(name)) custom.delete(name);
+  positions.forEach((p,name)=>{
+    const previous=graphView.locked&&sameCluster?graphLayout?.positions.get(name):null;
+    if(previous||custom.has(name)) positions.set(name,{...(previous||custom.get(name))});
+  });
+  let minX=0,minY=0,maxX=automatic.width,maxY=automatic.height;
+  positions.forEach(p=>{minX=Math.min(minX,p.x-40);minY=Math.min(minY,p.y-40);maxX=Math.max(maxX,p.x+cardWidth+40);maxY=Math.max(maxY,p.y+cardHeight+40);});
+  const width=maxX-minX,height=maxY-minY;
+  const viewportHeight=fullscreen?Math.max(1,container.clientHeight-96):Math.min(644,Math.max(380,Math.min(w*.78,height)));
+  container.style.height=fullscreen?'':`${viewportHeight+96}px`;
   const key=JSON.stringify([state.cluster,masterName,nodes.map(n=>n.name).sort()]);
-  const recenter=key!==graphView.key||w!==graphView.viewportWidth;
-  graphView={...graphView,key,width,height,viewportWidth:w,viewportHeight,fit:Math.min(1,w/width,viewportHeight/height),zoom:recenter?1:graphView.zoom};
+  const preserve=sameCluster&&(graphView.locked||custom.size>0||graphGesture);
+  const camera=preserve?(graphView.locked?graphView.lockCamera:previousCamera):null, oldScale=graphView.scale;
+  const recenter=!preserve&&(key!==graphView.key||w!==graphView.viewportWidth||viewportHeight!==graphView.viewportHeight);
+  const fit=Math.min(1,w/width,viewportHeight/height);
+  graphView={...graphView,key,cluster:state.cluster,width,height,minX,minY,viewportWidth:w,viewportHeight,fit,zoom:preserve?oldScale/fit:recenter?1:graphView.zoom,panX:recenter?0:graphView.panX,panY:recenter?0:graphView.panY};
+  graphLayout={nodes,positions,cardWidth,cardHeight};
   $('graphScene').style.width=`${width}px`;$('graphScene').style.height=`${height}px`;
+  // Keep SVG coordinates in the same world space as the draggable cards.
   $('graphLines').setAttribute('viewBox',`0 0 ${width} ${height}`);
-  updateGraphView(recenter);
+  updateGraphView(recenter,camera);
   $('graphNodes').innerHTML = nodes.map(node => {
     const p=positions.get(node.name), r=node.redis, active=online(node), isMaster=role(node)==='master';
     const status=!active?'Unavailable':r.loading?'Loading dataset':isMaster?'Accepting writes':r.syncing?'Synchronizing':r.link==='up'?'Replication connected':'Replication link down';
     const sync=syncView(node);
     const problem=['error','warning'].includes(sync.tone);
-    return `<button class="node-card ${role(node)} ${node.name===selected?'selected':''}" data-node="${esc(node.name)}" style="left:${p.x}px;top:${p.y}px;width:${cardWidth}px" aria-label="Inspect ${esc(node.name)}, ${role(node)}" aria-pressed="${node.name===selected}">
+    return `<button class="node-card ${role(node)} ${node.name===selected?'selected':''}" data-node="${esc(node.name)}" style="left:${p.x}px;top:${p.y}px;width:${cardWidth}px" aria-label="Inspect ${esc(node.name)}, ${role(node)}. Drag to move; use Alt and arrow keys to reposition." aria-pressed="${node.name===selected}">
       <div class="node-kicker">${icon(isMaster?'crown':'server')} REDIS INSTANCE <span>${node.name===selected?'SELECTED':'INSPECT ↗'}</span></div>
       <div class="node-top"><span class="node-name">${esc(node.name)}</span>${badge(node)}</div>
       <div class="node-address">${esc(endpoint(node))}</div>
@@ -174,6 +232,15 @@ function renderGraph() {
     </button>`;
   }).join('');
   if (focused) [...$('graphNodes').children].find(n => n.dataset.node === focused)?.focus({preventScroll:true});
+  renderGraphEdges();
+}
+
+function renderGraphEdges() {
+  $('graphLines').innerHTML=graphEdgeMarkup(graphLayout);
+}
+
+function graphEdgeMarkup(layout,animated=true) {
+  const {nodes,positions,cardWidth,cardHeight}=layout;
   let lines='<defs><marker id="arrowhead" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0 7 3.5 0 7" class="arrow-fill"/></marker><marker id="arrowhead-down" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0 7 3.5 0 7" class="arrow-fill down"/></marker></defs>';
   nodes.forEach((node,index) => {
     const upstream=nodes.find(other => (other.metadata.replication_address||other.metadata.address)===node.redis.upstream && Number(other.metadata.replication_port||other.metadata.redis_port)===Number(node.redis.upstream_port));
@@ -182,19 +249,22 @@ function renderGraph() {
     const from=positions.get(upstream.name),to=positions.get(node.name),connected=node.redis.up&&node.redis.link==='up'&&!node.redis.syncing&&!node.redis.loading&&upstream.redis.up;
     const dx=to.x-from.x,dy=to.y-from.y;
     // Attach to the facing borders so links work in every radial direction.
-    const ratio=1/Math.max(Math.abs(dx)/(cardWidth/2+8),Math.abs(dy)/(cardHeight/2+8));
+    const distance=Math.max(Math.abs(dx)/(cardWidth/2+8),Math.abs(dy)/(cardHeight/2+8));
+    if(distance<=1) return; // Overlapping cards have no visible link segment.
+    const ratio=1/distance;
     const x1=from.x+cardWidth/2+dx*ratio,y1=from.y+cardHeight/2+dy*ratio;
     const x2=to.x+cardWidth/2-dx*ratio,y2=to.y+cardHeight/2-dy*ratio;
     const path=`M${x1},${y1} L${x2},${y2}`;
     const related=selected===node.name||selected===upstream.name;
     lines+=`<path d="${path}" class="edge ${connected?'':'down'} ${related?'related':''}" marker-end="url(#${connected?'arrowhead':'arrowhead-down'})"/>`;
-    if (connected) lines+=`<circle class="flow-particle" r="3"><animateMotion dur="3s" begin="-${index}s" repeatCount="indefinite" path="${path}"/></circle>`;
+    if (connected&&animated) lines+=`<circle class="flow-particle" r="3"><animateMotion dur="3s" begin="-${index}s" repeatCount="indefinite" path="${path}"/></circle>`;
     if (!connected) lines+=`<rect x="${(x1+x2)/2-55}" y="${(y1+y2)/2-9}" width="110" height="18" rx="9" class="edge-label-bg"/><text x="${(x1+x2)/2}" y="${(y1+y2)/2+3}" text-anchor="middle" class="edge-label down">${node.redis.syncing?'SYNCING':node.redis.loading?'LOADING':'LINK DOWN'}</text>`;
   });
-  $('graphLines').innerHTML=lines;
+  return lines;
 }
 
 function renderSentinels() {
+  if(!$('sentinelNetwork')) return;
   const watchers=state.nodes.filter(n => n.metadata.sentinel_member);
   const focused=$('sentinelNetwork').contains(document.activeElement) ? document.activeElement.dataset.node : null;
   const master=state.nodes.find(n => n.name===state.master);
@@ -219,16 +289,22 @@ function sparkline(history) {
 }
 
 function renderFleet() {
-  $('fleetBody').innerHTML=state.nodes.length?state.nodes.map(node=>`<tr tabindex="0" data-node="${esc(node.name)}" class="${node.name===selected?'selected':''}" aria-label="Inspect ${esc(node.name)}"><td><span class="instance-cell"><i class="dot ${online(node)?'':'red'}"></i><span>${esc(node.name)}<small class="mono">${esc(node.metadata.address)}</small></span></span></td><td>${badge(node)}</td><td class="sync-cell">${syncBadge(node)}<small>${esc(syncView(node).description)}</small></td><td><span class="memory-cell mono">${node.redis.up?bytes(node.redis.memory_used):'—'}</span></td><td><span class="memory-cell mono">${node.redis.up?fmt(node.redis.ops_per_second):'—'}${sparkline(node.history)}</span></td><td><span class="sentinel-cell">${icon('shield')}${!node.metadata.sentinel_member?'Not configured':node.sentinel.up ? node.sentinel.quorum_ok?'Quorum ready':'No quorum':'Unavailable'}</span></td></tr>`).join(''):'<tr><td colspan="6" class="table-empty">Waiting for inventory…</td></tr>';
+  if(!$('fleetBody')) return;
+  const query=($('fleetSearch')?.value||'').trim().toLowerCase(),filter=$('fleetRole')?.value||'';
+  const nodes=state.nodes.filter(node=>(!filter||role(node)===filter)&&`${node.name} ${endpoint(node)}`.toLowerCase().includes(query));
+  if($('fleetCount')) $('fleetCount').textContent=`${nodes.length} / ${state.nodes.length} instances`;
+  $('fleetBody').innerHTML=nodes.length?nodes.map(node=>`<tr tabindex="0" data-node="${esc(node.name)}" class="${node.name===selected?'selected':''}" aria-label="Inspect ${esc(node.name)}"><td><span class="instance-cell"><i class="dot ${online(node)?'':'red'}"></i><span>${esc(node.name)}<small class="mono">${esc(node.metadata.address)}</small></span></span></td><td>${badge(node)}</td><td class="sync-cell">${syncBadge(node)}<small>${esc(syncView(node).description)}</small></td><td><span class="memory-cell mono">${node.redis.up?bytes(node.redis.memory_used):'—'}</span></td><td><span class="memory-cell mono">${node.redis.up?fmt(node.redis.ops_per_second):'—'}${sparkline(node.history)}</span></td><td><span class="sentinel-cell">${icon('shield')}${!node.metadata.sentinel_member?'Not configured':node.sentinel.up ? node.sentinel.quorum_ok?'Quorum ready':'No quorum':'Unavailable'}</span></td></tr>`).join(''):`<tr><td colspan="6" class="table-empty">${state.nodes.length?'No instances match your filters.':'Waiting for inventory…'}</td></tr>`;
 }
 
 function environmentDetails(node) {
+  if(!canSeeDetails)return '';
   const hw=node.hardware,c=node.container,deployment=node.metadata.deployment || 'nspawn';
   if(deployment==='direct')return `<div class="inspector-section"><div class="detail-label">DIRECT REDIS CONNECTION</div><p class="muted-text">Server hardware, storage, and log files are available with an optional SSH probe.</p></div>`;
   return `<div class="inspector-section"><div class="detail-label">${deployment==='nspawn'?'SERVER & CONTAINER':'SERVER'}${node.stale?' · LAST OBSERVATION':''}</div>${detail('Hostname',hw.hostname)}${detail('Operating system',hw.os)}${detail('Architecture',hw.architecture,true)}${detail('CPU cores / load',hw.cpu_cores?`${hw.cpu_cores} cores · ${Number(hw.load_1m).toFixed(2)} load`:'—')}${detail('CPU utilization',hw.cpu_percent!=null&&!node.stale?`${hw.cpu_percent}%`:'Awaiting samples')}${detail('Service state',node.stale?'Unknown':c.state)}${meter('Server memory',hw.memory_used,hw.memory_total)}${deployment==='nspawn'?meter('Container memory',c.memory_current,c.memory_limit):''}</div>`;
 }
 
 function configurationDetails(node) {
+  if(!canConfigure)return '<p class="muted-text">Configuration is not included in this viewing link.</p>';
   if (!node.metadata.redis_member) return '<p class="muted-text">This instance only runs Sentinel.</p>';
   if (!node.redis.up || node.stale) return '<p class="muted-text">Configuration is unavailable while Redis is unreachable.</p>';
   if (node.redis.config_status !== 'ok') return '<p class="muted-text">Unable to read configuration. The monitoring account needs permission to run CONFIG GET.</p>';
@@ -251,6 +327,8 @@ function sentinelDetails(node) {
 }
 
 function renderInspector() {
+  if(!$('inspector'))return;
+  if(selectedTab==='configuration'&&!canConfigure||selectedTab==='storage'&&!canSeeDetails)selectedTab='overview';
   const focusedTab = document.activeElement?.dataset.tab;
   const searchFocused = document.activeElement?.id === 'configSearch';
   const searchPosition = searchFocused ? document.activeElement.selectionStart : null;
@@ -278,7 +356,7 @@ function renderInspector() {
   } else {
     content=(node.stale?`<div class="inspector-status error">${icon('info')}Last observation · ${age(node.last_seen)}</div>`:'')+(node.storage.length?node.storage.map(item=>`<div class="storage-item"><div class="storage-name">${esc(item.label)}<span class="mount-state ${item.mounted?'':'bad'}">${item.mounted?'MOUNTED':node.stale?'NOT OBSERVED':'NOT MOUNTED'}</span></div>${meter('Space used',item.used,item.total)}<div class="path-label">SERVER PATH</div><div class="path-value">${esc(item.host_path)}</div>${node.metadata.deployment==='host'?'':`<div class="path-label">INSIDE CONTAINER</div><div class="path-value">${esc(item.container_path)}</div>`}${item.available!=null?`<div class="storage-source">${bytes(item.available)} available · ${esc(item.filesystem||'unknown filesystem')}</div>`:''}${item.source?`<div class="storage-source mono">${esc(item.source)}</div>`:''}</div>`).join(''):'<p class="muted-text">No storage information available yet.</p>')+`<div class="storage-item"><div class="storage-name">Runtime paths</div><div class="path-label">REDIS LOG FILE</div><div class="path-value">${esc(r.logfile||'Not observed')}</div><div class="path-label">REDIS CONFIGURATION</div><div class="path-value">${esc(r.config_file||'Not observed')}</div></div>`;
   }
-  $('inspector').innerHTML=`<div class="inspector-head"><div class="section-eyebrow">INSTANCE INSPECTOR</div><div class="inspector-title"><h2>${selectedTab==='sentinel'?icon('shield'):role(node)==='master'?icon('crown'):''}${esc(node.name)}</h2>${selectedTab==='sentinel'?'<span class="role-badge sentinel">Sentinel</span>':badge(node)}</div><div class="inspector-endpoint"><span>${esc(inspectorEndpoint)}</span><button class="copy-button" data-copy="${esc(inspectorEndpoint)}" title="Copy endpoint" aria-label="Copy endpoint">${icon('copy')}</button></div></div><div class="inspector-tabs"><button data-tab="overview" class="${selectedTab==='overview'?'active':''}" aria-pressed="${selectedTab==='overview'}">Overview</button>${node.metadata.redis_member?`<button data-tab="configuration" class="${selectedTab==='configuration'?'active':''}" aria-pressed="${selectedTab==='configuration'}">Configuration</button>`:''}${node.metadata.sentinel_member?`<button data-tab="sentinel" class="${selectedTab==='sentinel'?'active':''}" aria-pressed="${selectedTab==='sentinel'}">Sentinel</button>`:''}<button data-tab="storage" class="${selectedTab==='storage'?'active':''}" aria-pressed="${selectedTab==='storage'}">Storage & paths</button></div><div class="inspector-content ${selectedTab==='storage'?'storage-content':selectedTab==='configuration'?'configuration-content':''}">${content}</div>`;
+  $('inspector').innerHTML=`<div class="inspector-head"><div class="section-eyebrow">INSTANCE INSPECTOR</div><div class="inspector-title"><h2>${selectedTab==='sentinel'?icon('shield'):role(node)==='master'?icon('crown'):''}${esc(node.name)}</h2>${selectedTab==='sentinel'?'<span class="role-badge sentinel">Sentinel</span>':badge(node)}</div><div class="inspector-endpoint"><span>${esc(inspectorEndpoint)}</span><button class="copy-button" data-copy="${esc(inspectorEndpoint)}" title="Copy endpoint" aria-label="Copy endpoint">${icon('copy')}</button></div></div><div class="inspector-tabs"><button data-tab="overview" class="${selectedTab==='overview'?'active':''}" aria-pressed="${selectedTab==='overview'}">Overview</button>${node.metadata.redis_member&&canConfigure?`<button data-tab="configuration" class="${selectedTab==='configuration'?'active':''}" aria-pressed="${selectedTab==='configuration'}">Configuration</button>`:''}${node.metadata.sentinel_member?`<button data-tab="sentinel" class="${selectedTab==='sentinel'?'active':''}" aria-pressed="${selectedTab==='sentinel'}">Sentinel</button>`:''}${canSeeDetails?`<button data-tab="storage" class="${selectedTab==='storage'?'active':''}" aria-pressed="${selectedTab==='storage'}">Storage & paths</button>`:''}</div><div class="inspector-content ${selectedTab==='storage'?'storage-content':selectedTab==='configuration'?'configuration-content':''}">${content}</div>`;
   renderConfigurationRows();
   $('inspector').dataset.node = selected;
   if ($('configRows')) $('configRows').scrollTop = configScroll;
@@ -290,22 +368,39 @@ function renderInspector() {
 }
 
 function renderEvents() {
-  $('eventsList').innerHTML=state.events.length?state.events.slice(0,12).map(event=>`<div class="event"><i class="event-dot ${esc(event.kind)}"></i><span class="event-message">${esc(event.message)}</span><time class="event-time" datetime="${new Date(event.time*1000).toISOString()}" title="${new Date(event.time*1000).toLocaleString()}">${age(event.time)}</time></div>`).join(''):'<div class="empty-events">Outages, recoveries, and master promotions will appear here.</div>';
+  if(!$('eventsList'))return;
+  const filter=$('eventFilter')?.value||'',events=state.events.filter(event=>!filter||event.kind===filter);
+  $('eventsList').innerHTML=events.length?events.slice(0,pageContext.page==='activity'?60:12).map(event=>`<div class="event"><i class="event-dot ${esc(event.kind)}"></i><span class="event-message">${esc(event.message)}</span><time class="event-time" datetime="${new Date(event.time*1000).toISOString()}" title="${typeof formatWorkspaceDate==='function'?esc(formatWorkspaceDate(event.time)):new Date(event.time*1000).toLocaleString()}">${age(event.time)}</time></div>`).join(''):`<div class="empty-events">${filter?'No events of this type yet.':'Outages, recoveries, and master promotions will appear here.'}</div>`;
+}
+
+function renderAttention() {
+  if(!$('attentionList'))return;
+  const issues=[];
+  if(!state.updated_at)issues.push('Waiting for the first cluster observation.');
+  if(state.master_count>1)issues.push('Multiple Redis nodes report themselves as master. Check replication before writing.');
+  if(!state.master&&state.nodes.length)issues.push('No single master is confirmed for this cluster.');
+  state.nodes.forEach(node=>{
+    if(!online(node))issues.push(`${node.name} is unavailable.`);
+    else if(['error','warning'].includes(syncView(node).tone))issues.push(`${node.name}: ${syncView(node).title} · ${syncView(node).description}.`);
+    if(node.metadata.sentinel_member&&(!node.sentinel.up||!node.sentinel.quorum_ok))issues.push(`${node.name}: Sentinel ${node.sentinel.up?'cannot reach quorum':'is unavailable'}.`);
+  });
+  if(state.summary.sentinel_total&&!state.summary.consensus)issues.push('Sentinels do not all agree on the current master.');
+  $('attentionList').innerHTML=issues.length?issues.map(issue=>`<div class="attention-item">${icon('info')}<span>${esc(issue)}</span></div>`).join(''):`<div class="attention-good">${icon('shield')}<div><strong>All clear</strong><span>Every observed Redis instance is reporting normally.</span></div></div>`;
 }
 
 function updateTime() {
-  if (!state) return;
+  if (!state||accessLost) return;
   const stale=state.updated_at && Date.now()/1000-state.updated_at>Math.max(20,state.poll_interval*3+state.poll_duration);
   $('lastUpdated').textContent=`Last observation ${age(state.updated_at)}`;
   const pill=$('connectionPill'),bad=!serverConnected||stale||!!state.error;
   pill.classList.toggle('disconnected',bad);
   pill.querySelector('span').textContent=bad?stale?'Observation stale':'Collector unavailable':state.mode==='demo'?'Demo workspace':state.status==='loading'?'Connecting':'Live monitoring';
-  $('graphContainer').classList.toggle('stale',!!stale||!serverConnected);
+  $('graphContainer')?.classList.toggle('stale',!!stale||!serverConnected);
 }
 
 let fetching=false;
 async function fetchSnapshot() {
-  if (fetching) return;
+  if (fetching||accessLost) return;
   fetching=true;
   const requestedCluster=activeCluster,requestedScenario=scenario;
   try {
@@ -316,6 +411,7 @@ async function fetchSnapshot() {
     serverConnected=true;
     if (data.updated_at!==lastRender||!state) {lastRender=data.updated_at;render(data);} else updateTime();
   } catch {
+    if(accessLost)return;
     serverConnected=false;
     $('notice').hidden=false;
     $('notice').textContent='Dashboard connection lost. Showing the last observation; retrying automatically.';
@@ -323,16 +419,136 @@ async function fetchSnapshot() {
   } finally {fetching=false;if(requestedScenario!==scenario||(requestedCluster!==activeCluster&&state?.cluster!==activeCluster))fetchSnapshot();}
 }
 
+function moveGraphNode(name,x,y) {
+  const p={x,y};
+  graphLayout.positions.set(name,p);
+  graphLayouts.get(state.cluster).set(name,p);
+  if(typeof persistGraphPositions==='function')persistGraphPositions(state.cluster,graphLayouts.get(state.cluster));
+  const card=[...$('graphNodes').children].find(n=>n.dataset.node===name);
+  if(card) {card.style.left=`${x}px`;card.style.top=`${y}px`;}
+  renderGraphEdges();
+}
+
+function finishGraphGesture(event) {
+  if(!graphGesture||event.pointerId!==graphGesture.id) return;
+  const gesture=graphGesture;
+  graphGesture=null;
+  $('graphViewport').classList.remove('is-dragging');
+  if($('graphViewport').hasPointerCapture(gesture.id)) $('graphViewport').releasePointerCapture(gesture.id);
+  if(gesture.moved) {
+    // Pointer capture retargets the following click to the viewport.
+    graphSuppressClick=true;
+    setTimeout(()=>{graphSuppressClick=false;},0);
+    renderGraph();
+  }
+}
+
+function zoomGraph(factor,screenX=graphView.viewportWidth/2,screenY=graphView.viewportHeight/2) {
+  if(graphView.locked||!graphLayout)return;
+  const viewport=$('graphViewport'),oldScale=graphView.scale;
+  const x=(screenX+viewport.scrollLeft-graphView.x)/oldScale,y=(screenY+viewport.scrollTop-graphView.y)/oldScale;
+  const scale=Math.max(Math.min(graphView.fit,oldScale),Math.min(1.5,oldScale*factor));
+  graphView.zoom=scale/graphView.fit;
+  updateGraphView(false,{x:screenX-x*scale,y:screenY-y*scale,screen:true});
+}
+
+function bindGraphInteractions() {
+  const viewport=$('graphViewport');
+  if(!viewport)return;
+  viewport.addEventListener('pointerdown',event=>{
+    if(graphView.locked||!graphLayout||event.button!==0||event.isPrimary===false||graphGesture) return;
+    const card=event.target.closest('.node-card'), p=card?graphLayout.positions.get(card.dataset.node):null;
+    graphGesture={id:event.pointerId,node:card?.dataset.node,startX:event.clientX,startY:event.clientY,x:p?.x,y:p?.y,panX:graphView.panX,panY:graphView.panY,scale:graphView.scale,moved:false};
+  });
+  viewport.addEventListener('pointermove',event=>{
+    const g=graphGesture;
+    if(!g||event.pointerId!==g.id) return;
+    const dx=event.clientX-g.startX,dy=event.clientY-g.startY;
+    if(!g.moved&&Math.hypot(dx,dy)<4) return;
+    event.preventDefault();
+    if(!g.moved) {g.moved=true;viewport.setPointerCapture(g.id);viewport.classList.add('is-dragging');}
+    if(g.node) moveGraphNode(g.node,g.x+dx/g.scale,g.y+dy/g.scale);
+    else {graphView.panX=g.panX+dx;graphView.panY=g.panY+dy;updateGraphView();}
+  });
+  for(const type of ['pointerup','pointercancel','lostpointercapture']) viewport.addEventListener(type,finishGraphGesture);
+  // Also finish taps that leave the canvas before reaching the drag threshold.
+  document.addEventListener('pointerup',finishGraphGesture);
+  document.addEventListener('pointercancel',finishGraphGesture);
+  viewport.addEventListener('click',event=>{if(graphSuppressClick){event.preventDefault();event.stopPropagation();}},true);
+  viewport.addEventListener('wheel',event=>{
+    event.preventDefault();
+    if(graphView.locked||graphGesture||!graphLayout||!event.deltaY)return;
+    const units=event.deltaMode===1?16:event.deltaMode===2?graphView.viewportHeight:1;
+    const delta=Math.max(-100,Math.min(100,event.deltaY*units)),bounds=viewport.getBoundingClientRect();
+    zoomGraph(Math.exp(-delta*.0025),event.clientX-bounds.left,event.clientY-bounds.top);
+  },{passive:false});
+  viewport.addEventListener('keydown',event=>{
+    const delta={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[event.key];
+    if(!delta) return;
+    const card=event.target.closest('.node-card');
+    if(event.target!==viewport&&!(card&&event.altKey)) return;
+    event.preventDefault();
+    if(graphView.locked||!graphLayout) return;
+    const step=event.shiftKey?50:20;
+    if(card) {const p=graphLayout.positions.get(card.dataset.node);moveGraphNode(card.dataset.node,p.x+delta[0]*step,p.y+delta[1]*step);renderGraph();}
+    else {graphView.panX-=delta[0]*step;graphView.panY-=delta[1]*step;updateGraphView();}
+  });
+  document.addEventListener('fullscreenchange',()=>{syncGraphFullscreen();renderGraph();});
+  document.addEventListener('keydown',event=>{
+    if(event.key==='Escape'&&$('graphContainer').classList.contains('graph-expanded')) {setGraphExpanded(false);renderGraph();}
+    if(event.key==='Escape') $('graphExport').removeAttribute('open');
+  });
+}
+
+function syncGraphFullscreen() {
+  const expanded=document.fullscreenElement===$('graphContainer')||$('graphContainer').classList.contains('graph-expanded');
+  $('graphFullscreen').innerHTML=icon(expanded?'collapse':'expand');
+  $('graphFullscreen').setAttribute('aria-pressed',String(expanded));
+  $('graphFullscreen').setAttribute('aria-label',expanded?'Exit fullscreen':'Enter fullscreen');
+  $('graphFullscreen').title=expanded?'Exit fullscreen':'Enter fullscreen';
+}
+
+function setGraphExpanded(expanded) {
+  $('graphContainer').classList.toggle('graph-expanded',expanded);
+  document.body.classList.toggle('graph-fullscreen-open',expanded);
+  syncGraphFullscreen();
+  if(!expanded) $('graphFullscreen').focus({preventScroll:true});
+}
+
+async function toggleGraphFullscreen() {
+  const container=$('graphContainer');
+  if(document.fullscreenElement===container) {await document.exitFullscreen();return;}
+  if(container.classList.contains('graph-expanded')) {setGraphExpanded(false);renderGraph();return;}
+  if(container.requestFullscreen) {
+    try {await container.requestFullscreen();return;} catch { /* Embedded browsers may only support an expanded view. */ }
+  }
+  setGraphExpanded(true);
+  renderGraph();
+}
+
 document.addEventListener('click',async event=>{
+  if(!event.target.closest('#graphExport')) $('graphExport')?.removeAttribute('open');
   const graphAction=event.target.closest('[data-graph-action]');
   if(graphAction) {
     const action=graphAction.dataset.graphAction;
-    graphView.zoom=action==='fit'?1:Math.max(1,Math.min(1.5/graphView.fit,graphView.zoom*(action==='in'?1.25:.8)));
-    updateGraphView(true);
+    if(action==='download') {await downloadGraph(graphAction.dataset.format);return;}
+    if(action==='fullscreen') {await toggleGraphFullscreen();return;}
+    if(!graphLayout) return;
+    if(action==='lock') {
+      graphView.locked=!graphView.locked;
+      graphView.lockCamera={x:graphView.x-$('graphViewport').scrollLeft,y:graphView.y-$('graphViewport').scrollTop,screen:true};
+      updateGraphView();return;
+    }
+    if(graphView.locked) return;
+    if(action==='reset') {graphLayouts.get(state.cluster)?.clear();if(typeof persistGraphPositions==='function')persistGraphPositions(state.cluster,new Map());graphView.key='';renderGraph();return;}
+    if(action==='fit') {graphView.zoom=1;graphView.panX=0;graphView.panY=0;updateGraphView(true);return;}
+    zoomGraph(action==='in'?1.25:.8);
+    return;
   }
   const node=event.target.closest('[data-node]');
-  if (node) {selected=node.dataset.node;configFilter='';selectedTab=node.dataset.inspectTab || (state.nodes.find(n=>n.name===selected)?.metadata.redis_member?'configuration':'overview');renderGraph();renderSentinels();renderFleet();renderInspector();syncLogControls();
-    if (window.matchMedia('(max-width: 1000px)').matches) $('inspector').scrollIntoView({behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});
+  if (node) {selected=node.dataset.node;configFilter='';selectedTab=node.dataset.inspectTab || (canConfigure&&state.nodes.find(n=>n.name===selected)?.metadata.redis_member?'configuration':'overview');renderGraph();renderSentinels();renderFleet();renderInspector();syncLogControls();
+    if(typeof syncWorkspaceLocation==='function'&&!sharedView)syncWorkspaceLocation(activeCluster,selected);
+    if (window.matchMedia('(max-width: 1000px)').matches) $('inspector')?.scrollIntoView({behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});
   }
   const tab=event.target.closest('[data-tab]');
   if (tab) {selectedTab=tab.dataset.tab;renderInspector();}
@@ -343,21 +559,25 @@ document.addEventListener('click',async event=>{
 });
 document.addEventListener('input',event=>{if(event.target.id==='configSearch'){configFilter=event.target.value;renderConfigurationRows();}});
 document.addEventListener('keydown',event=>{if((event.key==='Enter'||event.key===' ')&&event.target.matches('tr[data-node]')){event.preventDefault();event.target.click();}});
+bindGraphInteractions();
 $('refreshButton').addEventListener('click',async()=>{
   const button=$('refreshButton');button.disabled=true;
-  try {const response=await apiFetch('/api/refresh',{method:'POST',headers:{'X-CSRF-Token':document.querySelector('meta[name="csrf-token"]').content}});if(!response.ok)throw Error('Refresh failed');await fetchSnapshot();} catch {serverConnected=false;updateTime();} finally {setTimeout(()=>{button.disabled=false;},800);}
+  try {if(!sharedView){const response=await apiFetch('/api/refresh',{method:'POST',headers:{'X-CSRF-Token':document.querySelector('meta[name="csrf-token"]').content}});if(!response.ok)throw Error('Refresh failed');}await fetchSnapshot();} catch {if(!accessLost){serverConnected=false;updateTime();}} finally {setTimeout(()=>{button.disabled=false;},800);}
 });
-$('demoScenario').addEventListener('change',event=>{scenario=event.target.value;lastRender=null;fetchSnapshot();});
-$('clusterSelect').addEventListener('change',event=>{activeCluster=event.target.value;selected=null;lastRender=null;fetchSnapshot();});
+$('demoScenario')?.addEventListener('change',event=>{scenario=event.target.value;lastRender=null;fetchSnapshot();});
+$('clusterSelect')?.addEventListener('change',event=>{activeCluster=event.target.value;selected=null;lastRender=null;fetchSnapshot();});
+$('fleetSearch')?.addEventListener('input',()=>{if(state)renderFleet();});
+$('fleetRole')?.addEventListener('change',()=>{if(state)renderFleet();});
+$('eventFilter')?.addEventListener('change',()=>{if(state)renderEvents();});
 let resizeTimer;
-new ResizeObserver(()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(renderGraph,80);}).observe($('graphContainer'));
+if($('graphContainer'))new ResizeObserver(()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(renderGraph,80);}).observe($('graphContainer'));
 setInterval(fetchSnapshot,2000);
 setInterval(()=>{updateTime();if(state)renderEvents();},1000);
 fetchSnapshot();
 
 let logService='redis', logPaused=false, logFollowing=true, logPayload=null, logContext='', logRequest=0, logRendering='';
 function syncLogControls() {
-  if (!state) return;
+  if (!state||!$('logNode')) return;
   const dropdown=$('logNode');
   if ([...dropdown.options].map(option=>option.value).join('|')!==state.nodes.map(node=>node.name).join('|')) {
     dropdown.replaceChildren(...state.nodes.map(node=>new Option(node.name,node.name)));
@@ -369,7 +589,7 @@ function syncLogControls() {
     const node=state.nodes.find(node=>node.name===selected);
     button.querySelector('span').textContent=node?.metadata[button.dataset.logService==='redis'?'redis_port':'sentinel_port'] || '—';
   });
-  const context=`${selected}:${logService}:${scenario}`;
+  const context=`${activeCluster}:${selected}:${logService}:${scenario}`;
   if (context!==logContext) {
     logContext=context;logPayload=null;logRendering='';
     $('logSource').textContent=`${selected || 'No instance'} / ${logService==='redis'?'Redis':'Sentinel'}`;
@@ -379,16 +599,17 @@ function syncLogControls() {
   }
 }
 async function fetchLogs(force=false) {
-  if (!selected || (logPaused&&!force)) return;
-  const name=selected, service=logService, request=++logRequest;
+  if (!selected || !$('logNode') || accessLost || (logPaused&&!force)) return;
+  const name=selected, service=logService, cluster=activeCluster, request=++logRequest;
   const controller=new AbortController(), timer=setTimeout(()=>controller.abort(),10000);
   try {
     const response=await apiFetch(`/api/logs/${encodeURIComponent(name)}/${service}?scenario=${encodeURIComponent(scenario)}`,{cache:'no-store',signal:controller.signal});
     if (!response.ok) throw Error('Unavailable');
     const data=await response.json();
-    if (request!==logRequest||name!==selected||service!==logService||(logPaused&&!force)) return;
+    if (request!==logRequest||name!==selected||cluster!==activeCluster||service!==logService||(logPaused&&!force)) return;
     logPayload=data;renderLogs();
   } catch {
+    if(accessLost)return;
     if (request!==logRequest) return;
     $('logStatus').textContent='DISCONNECTED';$('logStatus').className='log-live error';
     $('logUpdated').textContent='Connection lost · retrying automatically';
@@ -427,27 +648,23 @@ function renderLogs() {
   output.replaceChildren(fragment);
   output.scrollTop=logFollowing?output.scrollHeight:scroll;
 }
-$('logNode').addEventListener('change',event=>{
+$('logNode')?.addEventListener('change',event=>{
   selected=event.target.value;renderGraph();renderSentinels();renderFleet();renderInspector();syncLogControls();
+  if(typeof syncWorkspaceLocation==='function'&&!sharedView)syncWorkspaceLocation(activeCluster,selected);
 });
-$('logFilter').addEventListener('input',renderLogs);
-$('logPause').addEventListener('click',()=>{
+$('logFilter')?.addEventListener('input',renderLogs);
+$('logPause')?.addEventListener('click',()=>{
   logPaused=!logPaused;
   $('logPause').textContent=logPaused?'Resume':'Pause';$('logPause').setAttribute('aria-pressed',String(logPaused));
   renderLogs();if(!logPaused)fetchLogs();
 });
-$('logFollow').addEventListener('click',()=>{
+$('logFollow')?.addEventListener('click',()=>{
   logFollowing=!logFollowing;
   $('logFollow').textContent=logFollowing?'Following ↓':'Follow ↓';$('logFollow').setAttribute('aria-pressed',String(logFollowing));
   if(logFollowing)$('logOutput').scrollTop=$('logOutput').scrollHeight;
 });
-const sections=[...document.querySelectorAll('main section[id]')];
-const navigationObserver=new IntersectionObserver(entries=>{
-  const visible=entries.filter(entry=>entry.isIntersecting).sort((a,b)=>b.intersectionRatio-a.intersectionRatio)[0];
-  if(!visible)return;
-  document.querySelectorAll('.nav-link').forEach(link=>link.classList.toggle('active',link.hash===`#${visible.target.id}`));
-},{rootMargin:'-10% 0px -45% 0px',threshold:[0,.2,.5]});
-sections.forEach(section=>navigationObserver.observe(section));
 // Cached reads do not create additional SSH sessions for browser tabs.
-setInterval(fetchLogs,2000);
-setInterval(()=>{if(!logPaused&&logPayload)renderLogs();},1000);
+if($('logNode')) {
+  setInterval(fetchLogs,2000);
+  setInterval(()=>{if(!logPaused&&logPayload)renderLogs();},1000);
+}

@@ -73,6 +73,8 @@ def init_auth(app, overrides=None):
         if request.endpoint in ('static', 'health'):
             return
         g.user = store.session_user(session.get('auth_token'))
+        if request.endpoint in ('shared_view', 'shared_cluster', 'shared_logs'):
+            return app.extensions['shared_auth']()
         if request.endpoint != 'login' and not g.user:
             if request.path.startswith('/api/'):
                 return jsonify({'error': 'Login required.', 'login_url': url_for('login')}), 401
@@ -109,17 +111,34 @@ def init_auth(app, overrides=None):
         return redirect(url_for('login'))
 
     @app.route('/account', methods=['GET', 'POST'])
+    @app.route('/profile', methods=['GET', 'POST'])
     def account():
         if request.method == 'POST':
             try:
-                store.change_password(g.user.id, request.form.get('password', ''), request.form.get('current_password', ''))
-            except ValueError as error:
-                flash(str(error), 'error')
+                action = request.form.get('action', 'password')
+                if action == 'profile':
+                    store.update_profile(g.user.id, request.form.get('username', '').strip(), request.form,
+                        request.form.get('current_password', ''))
+                    flash('Profile updated.', 'success')
+                    return redirect(url_for('account'))
+                if action == 'sessions':
+                    store.revoke_other_sessions(g.user.id, session['auth_token'])
+                    flash('Your other sessions have been signed out.', 'success')
+                    return redirect(url_for('account'))
+                if action != 'password':
+                    raise ValueError('Unknown profile action.')
+                password = request.form.get('password', '')
+                if 'password_confirm' in request.form and password != request.form['password_confirm']:
+                    raise ValueError('The new passwords do not match.')
+                store.change_password(g.user.id, password, request.form.get('current_password', ''))
+            except (ValueError, SQLAlchemyError) as error:
+                flash(str(error) if isinstance(error, ValueError) else 'Unable to update your profile. That username may already be in use.', 'error')
             else:
                 session.clear()
                 flash('Password changed. Sign in again.', 'success')
                 return redirect(url_for('login'))
-        return render_template('account.html')
+        return render_template('account.html', page='profile', title='Your profile', description='Your identity, preferences, and account security.',
+            profile=store.profile(g.user.id), sessions=store.active_sessions(g.user.id, session['auth_token']))
 
     @app.route('/users', methods=['GET', 'POST'])
     def users():
@@ -139,4 +158,4 @@ def init_auth(app, overrides=None):
             except (ValueError, SQLAlchemyError) as error:
                 flash(str(error) if isinstance(error, ValueError) else 'Cannot update that account.', 'error')
             return redirect(url_for('users'))
-        return render_template('users.html', users=store.list_users())
+        return render_template('users.html', page='users', title='Workspace accounts', description='Manage who can access this observatory.', users=store.list_users())

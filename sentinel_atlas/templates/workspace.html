@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+ <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0c1424">
+ {% if not shared %}<meta name="csrf-token" content="{{ csrf_token() }}">{% endif %}
+ <title>{{ title }} · Sentinel Atlas</title>
+ <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+ <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='observatory.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='workspace.css') }}">
+ <script src="{{ url_for('static', filename='workspace.js') }}" defer></script>
+ {% if monitoring %}<script src="{{ url_for('static', filename='graph-export.js') }}" defer></script><script src="{{ url_for('static', filename='app.js') }}" defer></script>{% endif %}
+</head>
+<body class="dashboard multipage" data-page="{{ page }}" data-shared="{{ 'true' if shared else 'false' }}" data-config="{{ 'true' if not shared or permissions.config else 'false' }}" data-details="{{ 'true' if not shared or permissions.details else 'false' }}" data-api-base="{{ api_base|default('/api') }}" data-layout-key="{{ 'share-' ~ share.id if shared else 'user-' ~ g.user.id }}" data-timezone="{{ user_profile.timezone if user_profile else '' }}">
+<a class="skip-link" href="#mainContent">Skip to content</a>
+{% include 'icons.html' %}
+<aside class="sidebar" aria-label="Navigation">
+ <a class="workspace-brand" href="{{ url_for('shared_view', token=request.view_args.token) if shared else workspace_url('index') }}"><span class="brand-mark"><img src="{{ url_for('static', filename='owl.svg') }}" alt=""></span><span>sentinel<b>atlas</b></span></a>
+ <div class="nav-divider"></div>
+ {% if shared %}
+ <span class="nav-caption">SHARED WORKSPACE</span>
+ {% set navigation = [('live','Live cluster','network')] + ([('logs','Live logs','terminal')] if permissions.logs else []) + ([('activity','Activity','clock')] if permissions.events else []) %}
+ {% for key,label,symbol in navigation %}<a class="nav-link {{ 'active' if page == key }}" href="{{ url_for('shared_view', token=request.view_args.token, view=key) }}" aria-label="{{ label }}" title="{{ label }}" {% if page == key %}aria-current="page"{% endif %}><svg><use href="#i-{{ symbol }}"/></svg><span>{{ label }}</span></a>{% endfor %}
+ <div class="sidebar-bottom"><span class="nav-caption">READ-ONLY ACCESS</span></div>
+ {% else %}
+ <span class="nav-caption">OBSERVATORY</span>
+ {% for key,label,endpoint,symbol in [('overview','Overview','index','stack'),('live','Live cluster','live','network'),('instances','Instances','instances','server'),('logs','Live logs','logs_page','terminal'),('activity','Activity','activity','clock')] %}
+ <a class="nav-link {{ 'active' if page == key }}" data-cluster-link href="{{ workspace_url(endpoint) }}" aria-label="{{ label }}" title="{{ label }}" {% if page == key %}aria-current="page"{% endif %}><svg><use href="#i-{{ symbol }}"/></svg><span>{{ label }}</span></a>
+ {% endfor %}
+ <div class="nav-divider"></div><span class="nav-caption">WORKSPACE</span>
+ {% for key,label,endpoint,symbol in [('shares','Share links','shares','share'),('profile','Your profile','account','user')] %}<a class="nav-link {{ 'active' if page == key }}" data-cluster-link href="{{ workspace_url(endpoint) }}" aria-label="{{ label }}" title="{{ label }}" {% if page == key %}aria-current="page"{% endif %}><svg><use href="#i-{{ symbol }}"/></svg><span>{{ label }}</span></a>{% endfor %}
+ {% if g.user.is_admin %}<a class="nav-link {{ 'active' if page == 'users' }}" href="{{ url_for('users') }}" aria-label="Accounts" title="Accounts"><svg><use href="#i-shield"/></svg><span>Accounts</span></a>{% endif %}
+ <a class="nav-link {{ 'active' if page == 'about' }}" href="{{ url_for('about') }}" aria-label="About & open source" title="About & open source" {% if page == 'about' %}aria-current="page"{% endif %}><svg><use href="#i-info"/></svg><span>About &amp; open source</span></a>
+ <div class="sidebar-bottom"><span class="workspace-avatar">{{ g.user.username[:2]|upper }}</span><span class="sidebar-identity">{{ user_profile.display_name or g.user.username }}<small>{{ 'Administrator' if g.user.is_admin else 'Viewer' }}</small></span></div>
+ {% endif %}
+</aside>
+<div class="app-shell">
+ <header class="topbar"><div class="product-name">sentinel<span>atlas</span><span class="product-divider">/</span><span class="breadcrumb">{{ title }}</span></div>
+ <div class="topbar-right">
+ {% if monitoring %}{% if not shared %}<select id="clusterSelect" class="cluster-select" aria-label="Monitored cluster" hidden></select>{% endif %}<span class="connection-pill" id="connectionPill"><i class="status-dot"></i><span>Connecting</span></span>{% endif %}
+ {% if shared %}<span class="shared-badge">Shared · Read only</span>{% else %}<a class="account-link" href="{{ url_for('account') }}">{{ user_profile.display_name or g.user.username }}</a><form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="logout-button">Sign out</button></form>{% endif %}
+ </div></header>
+ <main id="mainContent">
+ {% for category,message in get_flashed_messages(with_categories=true) %}<div class="workspace-message {{ category }}" role="status">{{ message }}</div>{% endfor %}
+ <section class="page-heading"><div><div class="eyebrow"><span class="small-line"></span>{{ 'SHARED CLUSTER VIEW' if shared else 'REDIS & SENTINEL OBSERVATORY' }}</div><h1>{{ title }}<span>.</span></h1><p>{{ description }}</p></div>
+ {% if monitoring %}<div class="heading-actions">{% if not shared %}<div id="demoControls" class="demo-controls" hidden><label for="demoScenario">Sample data</label><select id="demoScenario"><option value="healthy">Healthy cluster</option><option value="down">Node outage</option><option value="failover">Master promotion</option></select></div>{% endif %}<button class="button" id="refreshButton"><svg><use href="#i-refresh"/></svg><span>Refresh{{ ' view' if shared }}</span></button></div>{% endif %}</section>
+ {% if shared %}<div class="shared-notice">Viewing <strong>{{ share.cluster }}</strong> · {{ 'No expiry' if not share.expires_at else 'Access expires ' }}{% if share.expires_at %}<time data-timestamp="{{ share.expires_at }}"></time>{% endif %}<span>Graph{% if permissions.config %} · Configuration{% endif %}{% if permissions.logs %} · Logs{% endif %}{% if permissions.details %} · Server details{% endif %}{% if permissions.events %} · Activity{% endif %}</span></div>{% endif %}
+ {% if monitoring %}<div id="notice" class="notice" role="status" hidden></div>{% endif %}
+ {% block content %}{% endblock %}
+ <footer class="page-footer"><div class="project-credit"><span class="footer-brand">sentinel atlas</span><span>Created by <a href="https://github.com/alisharify7" target="_blank" rel="noopener noreferrer">Ali Sharify · @alisharify7</a> · <a href="https://ali-sharify.ir" target="_blank" rel="noopener noreferrer">ali-sharify.ir</a></span><span><a href="https://github.com/alisharify7/Sentinel-Atlas" target="_blank" rel="noopener noreferrer">Open source · GPL-2.0</a> · Made possible by the open source community{% if not shared %} · <a href="{{ url_for('about') }}">Credits &amp; contribute</a>{% endif %}</span></div>{% if monitoring %}<span id="lastUpdated">Waiting for the first observation</span>{% endif %}</footer>
+ </main>
+</div>
+</body></html>
