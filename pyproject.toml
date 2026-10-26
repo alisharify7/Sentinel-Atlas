@@ -17,6 +17,7 @@ dynamic = ["dependencies", "optional-dependencies"]
 Homepage = "https://ali-sharify.ir"
 Repository = "https://github.com/alisharify7/Sentinel-Atlas"
 Issues = "https://github.com/alisharify7/Sentinel-Atlas/issues"
+Donate = "https://www.coffeete.ir/alisharify7"
 
 [project.scripts]
 sentinel-atlas = "sentinel_atlas.cli:main"

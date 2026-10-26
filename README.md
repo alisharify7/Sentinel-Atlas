@@ -20,6 +20,7 @@
   <a href="docs/docker.md">Docker</a> &nbsp;·&nbsp;
   <a href="docs/configuration.md">Configuration guide</a> &nbsp;·&nbsp;
   <a href="CONTRIBUTING.md">Contributing</a> &nbsp;·&nbsp;
+  <a href="#support-the-project">Donate</a> &nbsp;·&nbsp;
   <a href="LICENSE">License</a>
 </p>
 
@@ -362,3 +363,9 @@ Thank you to the open source community and the maintainers of Python, Redis,
 Flask, SQLAlchemy, redis-py, Waitress, Psycopg, PyYAML, python-dotenv, and tzdata.
 Bug reports, documentation, reviews, and focused code contributions are welcome.
 See [CONTRIBUTING.md](CONTRIBUTING.md), or visit **About & open source** in the app.
+
+## Support the project
+
+If Sentinel Atlas is useful to you, you can support its development by
+[buying Ali a coffee on Coffeete](https://www.coffeete.ir/alisharify7).
+Bug reports, documentation, and code contributions are also appreciated.
