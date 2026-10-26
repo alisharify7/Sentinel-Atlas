@@ -115,6 +115,16 @@ permanent. Owners can revoke their own links. Disabling an owner revokes their
 links permanently, including after the account is re-enabled. Password changes
 revoke account sessions; viewing links remain separately managed on the sharing page.
 
+Owners can **Edit** a generated link's name, optional permissions, and expiration
+without changing its URL or cluster. **Keep current expiry** preserves the exact
+deadline; choosing a new duration starts it from the save time, and **Never** makes
+the link permanent. Expired links can be renewed explicitly. Revoked links cannot
+be reactivated or edited. **Delete** asks for confirmation, removes the database
+record permanently, and disables that URL. Active, expired, and revoked links can
+all be deleted. Every edit, revoke, and delete operation requires login, ownership,
+and a CSRF token. Open viewers reload access changes on their next poll, even when
+the underlying Redis observation has not changed.
+
 The 64-character random bearer token is generated from 48 random bytes. Only its
 SHA-256 digest is stored in the database. The full URL appears once after creation;
 copy it then, or create a replacement. Every shared request checks owner status,

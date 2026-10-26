@@ -6,6 +6,115 @@ The default image connects directly to Redis/Sentinel. It runs as UID/GID
 `10001:10001` and serves HTTP with Waitress. The image contains no default
 password, database, inventory, or `.env` file.
 
+## Build and optionally publish an image
+
+The executable Bash helper works from any directory and builds locally by default:
+
+```bash
+./script/make-docker.sh
+# Local image: sentinel-atlas:local
+./script/make-docker.sh --help
+```
+
+Configure it with environment variables, or edit the defaults at the top of the
+script. There is no Docker Hub repository or account hard-coded into the helper.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `IMAGE_NAME` | `sentinel-atlas` | Local image name, or `your-user/sentinel-atlas` for Docker Hub |
+| `IMAGE_TAG` | `local` | Image version/tag; publishing requires an explicit non-`local` tag |
+| `BUILD_TARGET` | `runtime` | `runtime` for direct Redis monitoring, or `ansible` for SSH/server probes |
+| `PLATFORMS` | Native locally; `linux/amd64,linux/arm64` when publishing | One platform for a local load, or multiple platforms for a publish |
+| `PUSH` | `false` | Set `true` only when ready to publish |
+| `TAG_LATEST` | `false` | Set `true` to also tag the image as `latest` |
+
+Build a versioned image without publishing:
+
+```bash
+IMAGE_NAME=your-dockerhub-user/sentinel-atlas \
+IMAGE_TAG=0.1.0 \
+./script/make-docker.sh
+```
+
+When you decide to publish, log in yourself and enable publishing explicitly:
+
+```bash
+docker login
+IMAGE_NAME=your-dockerhub-user/sentinel-atlas \
+IMAGE_TAG=0.1.0 \
+PUSH=true \
+TAG_LATEST=true \
+./script/make-docker.sh
+```
+
+Add `--dry-run` to print the command without contacting Docker, building, or
+publishing. Equivalent flags include `--image`, `--tag`, `--target`, `--platforms`,
+and `--push`. The helper does not read `.env`, perform a login, or pass runtime
+credentials as build arguments. Configure application variables at container run time.
+
+Docker and Buildx must be installed and Docker must be running. Multi-platform
+publishing needs a builder that supports the requested platforms. If your current
+builder does not support them, create one before publishing:
+
+```bash
+docker buildx create --name atlas-builder --driver docker-container --use
+docker buildx inspect --bootstrap
+```
+
+The helper uses Buildx's `--load` for local builds and `--push` only for an explicit
+publish. See the [Docker Buildx reference](https://docs.docker.com/reference/cli/docker/buildx/build/).
+
+## Run a prebuilt or published image
+
+Once you have published an image, users do not need to build the application.
+They can use the same `--env-file` and volume options with its repository/tag:
+
+```bash
+# Replace this value with your published repository and tag.
+ATLAS_IMAGE=your-dockerhub-user/sentinel-atlas:0.1.0
+docker pull "$ATLAS_IMAGE"
+docker volume create sentinel-atlas-data
+docker run -d --name sentinel-atlas --restart unless-stopped \
+  --env-file .env \
+  --add-host host.docker.internal:host-gateway \
+  -p 127.0.0.1:5050:5050 \
+  -v sentinel-atlas-data:/var/lib/sentinel-atlas \
+  "$ATLAS_IMAGE"
+```
+
+Use `sentinel-atlas:local` without `docker pull` to run a local helper build.
+Prepare `.env` with your own `DEFAULT_PASSWORD` and Redis connection settings as
+shown below. Appending `--demo` after the image name starts the sample workspace.
+
+`compose.image.yaml` runs an existing image without a build section. Keep it
+alongside your `.env` file and set `ATLAS_IMAGE` to a local or published image:
+
+```bash
+ATLAS_IMAGE=sentinel-atlas:local docker compose -f compose.image.yaml up -d
+# For a published image, set ATLAS_IMAGE to that repository/tag and pull first:
+ATLAS_IMAGE=your-dockerhub-user/sentinel-atlas:0.1.0 \
+  docker compose -f compose.image.yaml pull
+ATLAS_IMAGE=your-dockerhub-user/sentinel-atlas:0.1.0 \
+  docker compose -f compose.image.yaml up -d
+```
+
+### Runtime variables and mounts
+
+| Setting | How to supply it |
+| --- | --- |
+| First administrator | `DEFAULT_ACCOUNT` and `DEFAULT_PASSWORD` through `--env-file` or `-e`; only used for an empty account database |
+| Redis/Sentinel connections | `REDIS_URL`, `SENTINEL_URL`, or `SENTINEL_TARGETS` and its referenced credential variables |
+| Persistent application data | Named volume at `/var/lib/sentinel-atlas`; retains accounts, profiles, viewing links, sessions, and the signing key |
+| Custom target definitions | Read-only bind mount at `/config/targets.yml` plus `SENTINEL_TARGETS=/config/targets.yml` |
+| TLS files or SSH inventory | Read-only mounts, referenced by paths inside the container |
+| PostgreSQL | `DATABASE_URL` pointing to a reachable PostgreSQL server; keep the Atlas data volume for its signing key too |
+| HTTP listener | Container port `5050`; `ATLAS_PORT` controls the host mapping in Compose |
+| HTTPS session cookies | `SESSION_COOKIE_SECURE=true` when serving through an HTTPS proxy |
+
+The image runs as UID/GID `10001:10001`. Named volumes work with the prepared data
+directory; host bind mounts must be writable by that user. Data belongs in the
+volume, not in the image. Keep the same volume when replacing/upgrading a container.
+
 ## Docker Compose
 
 From the repository root:
@@ -39,7 +148,7 @@ Open **http://127.0.0.1:5050** and sign in. Configure `ATLAS_PORT` in `.env` if
 
 The Compose service has a read-only root filesystem, a writable `/tmp`, and a
 named `atlas-data` volume mounted at `/var/lib/sentinel-atlas`. This retains the
-SQLite account database and session signing key when the container is replaced.
+SQLite account database, profiles, viewing links, and session signing key when the container is replaced.
 Leave `DATABASE_URL` unset for the default SQLite file; an absolute host SQLite
 path does not automatically become available inside the container.
 
@@ -161,7 +270,7 @@ already suppresses its Ansible log output. Do not bake these files into an image
 ## Operations
 
 - `/healthz` is a minimal public liveness endpoint. It returns only `{"status":"ok"}`;
-  monitoring data, logs, and the dashboard still require login. A Redis outage
+  the private workspace requires login, while viewing links grant only their selected cluster and permissions. A Redis outage
   does not make the HTTP server unhealthy.
 - Docker sends SIGTERM to the Python process for graceful HTTP/collector shutdown.
 - One process owns one background collector. Multiple replicas collect their own
@@ -178,6 +287,12 @@ python tests/docker_smoke.py
 python tests/docker_smoke.py --postgres
 ```
 
-This builds the runtime image, checks login and assets, verifies SQLite/session-key
-persistence after replacing the container, and checks direct monitoring against a
+This builds the runtime image, checks login and assets, verifies account, profile,
+viewing-link, and session-key persistence after replacing the container, and checks direct monitoring against a
 throwaway Redis container. Test containers, networks, and volumes are removed.
+
+To verify an image you already built with the helper:
+
+```bash
+python tests/docker_smoke.py --skip-build --image sentinel-atlas:local
+```

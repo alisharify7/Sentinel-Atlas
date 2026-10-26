@@ -2,6 +2,12 @@
 ARG PYTHON_IMAGE=python:3.13-slim
 FROM ${PYTHON_IMAGE} AS base
 
+LABEL org.opencontainers.image.title="Sentinel Atlas" \
+    org.opencontainers.image.description="Read-only Redis and Sentinel observatory with live topology and scoped sharing" \
+    org.opencontainers.image.source="https://github.com/alisharify7/Sentinel-Atlas" \
+    org.opencontainers.image.url="https://ali-sharify.ir" \
+    org.opencontainers.image.licenses="GPL-2.0-only"
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \

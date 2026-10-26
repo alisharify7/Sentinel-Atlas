@@ -1,5 +1,6 @@
 """Revocable, cluster-scoped viewing links. Public responses use explicit allowlists."""
 import copy
+import json
 import re
 import secrets
 import time
@@ -16,11 +17,17 @@ EXPIRATIONS = {'900': 900, '3600': 3600, '86400': 86400, '604800': 604800,
 SCOPES = ('config', 'logs', 'details', 'events')
 
 
+def share_revision(link):
+    """Detect access changes without storing or exposing the bearer token."""
+    return digest(json.dumps([link.label, link.cluster, link.expires_at,
+        *[getattr(link, f'allow_{scope}') for scope in SCOPES]], separators=(',', ':')))
+
+
 def shared_snapshot(snapshot, link):
     result = {key: copy.deepcopy(snapshot[key]) for key in (
         'mode', 'status', 'updated_at', 'poll_interval', 'poll_duration', 'cluster',
         'master', 'master_count', 'summary')}
-    result.update(clusters=[link.cluster], error=None, nodes=[], events=[])
+    result.update(clusters=[link.cluster], error=None, nodes=[], events=[], share_revision=share_revision(link))
     for source in snapshot['nodes']:
         if source['metadata'].get('cluster', 'redis') != link.cluster:
             continue
@@ -49,6 +56,18 @@ def shared_snapshot(snapshot, link):
 
 def init_sharing(app, monitor, snapshot_for):
     store = app.extensions['accounts']
+
+    def owned_link(db, link_id):
+        link = db.get(ShareLink, link_id)
+        if not link or link.owner_id != g.user.id:
+            abort(404)
+        return link
+
+    def link_label():
+        label = request.form.get('label', '').strip()
+        if not label or len(label) > 100:
+            raise ValueError('Give your link a name of 1–100 characters.')
+        return label
 
     def authenticate_share():
         token = request.view_args.get('token', '')
@@ -81,24 +100,44 @@ def init_sharing(app, monitor, snapshot_for):
     def shares():
         data = snapshot_for(request.args.get('cluster'))
         if request.method == 'POST':
+            action = request.form.get('action', 'create')
+            edit_id = None
             try:
-                action = request.form.get('action', 'create')
-                if action == 'revoke':
+                if action in ('revoke', 'delete', 'edit'):
                     link_id = int(request.form.get('link_id', '0'))
                     with store.session.begin() as db:
-                        link = db.get(ShareLink, link_id)
-                        if not link or link.owner_id != g.user.id:
-                            abort(404)
-                        link.revoked_at = time.time()
-                    flash('Viewing link revoked. Existing viewers lose access on their next request.', 'success')
+                        link = owned_link(db, link_id)
+                        if action == 'delete':
+                            db.delete(link)
+                            if session.get('new_share', {}).get('id') == link_id:
+                                session.pop('new_share', None)
+                        elif action == 'revoke':
+                            link.revoked_at = time.time()
+                        else:
+                            if link.revoked_at:
+                                raise ValueError('Revoked links cannot be edited. Create a new viewing link instead.')
+                            edit_id = link_id
+                            label = link_label()
+                            duration = request.form.get('duration', 'keep')
+                            if duration != 'keep' and duration not in EXPIRATIONS:
+                                raise ValueError('Choose a supported expiration time.')
+                            link.label = label
+                            if duration != 'keep':
+                                link.expires_at = time.time()+EXPIRATIONS[duration] if EXPIRATIONS[duration] else None
+                            for scope in SCOPES:
+                                setattr(link, f'allow_{scope}', request.form.get(scope) == 'on')
+                    if action == 'delete':
+                        flash('Viewing link deleted. Its URL no longer works.', 'success')
+                    elif action == 'edit':
+                        flash('Viewing link updated. The URL is unchanged; viewers receive the new access on their next request.', 'success')
+                    else:
+                        flash('Viewing link revoked. Existing viewers lose access on their next request.', 'success')
                 elif action == 'create':
                     cluster = request.form.get('cluster', '')
-                    label = request.form.get('label', '').strip()
+                    label = link_label()
                     duration = request.form.get('duration', '3600')
                     if cluster not in data['clusters']:
                         raise ValueError('Choose a monitored cluster.')
-                    if not label or len(label) > 100:
-                        raise ValueError('Give your link a name of 1–100 characters.')
                     if duration not in EXPIRATIONS:
                         raise ValueError('Choose a supported expiration time.')
                     now = time.time()
@@ -114,7 +153,26 @@ def init_sharing(app, monitor, snapshot_for):
                     raise ValueError('Unknown sharing action.')
             except ValueError as error:
                 flash(str(error), 'error')
+                if edit_id:
+                    return redirect(url_for('shares', cluster=data['cluster'], edit=edit_id))
             return redirect(url_for('shares', cluster=data['cluster']))
+        editing = deleting = None
+        if request.args.get('edit') and request.args.get('delete'):
+            abort(400)
+        with store.session() as db:
+            for key in ('edit', 'delete'):
+                if key in request.args:
+                    link_id = request.args.get(key, type=int)
+                    if link_id is None:
+                        abort(404)
+                    link = owned_link(db, link_id)
+                    if key == 'edit':
+                        if link.revoked_at:
+                            flash('Revoked links cannot be edited. Create a new viewing link instead.', 'error')
+                            return redirect(url_for('shares', cluster=data['cluster']))
+                        editing = link
+                    else:
+                        deleting = link
         new_share = session.pop('new_share', None)
         created_path = None
         if new_share:
@@ -127,7 +185,7 @@ def init_sharing(app, monitor, snapshot_for):
         return render_template('shares.html', page='shares', title='Share a clear view',
             description='Give someone a focused, read-only window into one cluster.',
             clusters=data['clusters'], selected_cluster=data['cluster'], links=links,
-            created_path=created_path, now=time.time())
+            created_path=created_path, now=time.time(), editing=editing, deleting=deleting)
 
     @app.get('/s/<token>')
     @app.get('/s/<token>/<view>')
@@ -141,7 +199,7 @@ def init_sharing(app, monitor, snapshot_for):
         titles = {'live': 'Live cluster', 'logs': 'Live logs', 'activity': 'Cluster activity'}
         return render_template(f'{view}.html', page=view, title=titles[view],
             description=g.share.label, monitoring=True, shared=True, permissions=permissions,
-            share=g.share, api_base=url_for('shared_cluster', token=token).rsplit('/cluster', 1)[0])
+            share=g.share, share_revision=share_revision(g.share), api_base=url_for('shared_cluster', token=token).rsplit('/cluster', 1)[0])
 
     @app.get('/s/<token>/api/cluster')
     def shared_cluster(token):

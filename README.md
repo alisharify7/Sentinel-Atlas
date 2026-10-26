@@ -56,7 +56,8 @@ for Linux hardware, storage, and live service logs.
 | **Multiple clusters** | Switch between caches and replication groups; keep the selected cluster and instance as you navigate |
 | **Profiles & sessions** | Update your username, password, display name, contact information, team, biography, and timezone; sign out other sessions |
 | **Scoped viewing links** | Share one cluster without requiring a recipient account; choose graph-only access or independently enable configuration, logs, server details, and activity |
-| **Expiry & revocation** | Generate links for 15 minutes, 1 hour, 24 hours, 7 days, 30 days, or permanently; revoke them and review when they were last viewed |
+| **Link management** | Edit a link's name, permissions, or expiry without changing its URL; renew expired links, revoke access, or delete links permanently |
+| **Expiry & revocation** | Generate links for 15 minutes, 1 hour, 24 hours, 7 days, 30 days, or permanently; review when they were last viewed |
 | **Workspace accounts** | Require login for the private workspace, manage admin/viewer accounts, and revoke sessions and links when disabling an account |
 | **Open source** | Find creator credits, community acknowledgments, source, license, and contribution links inside the app |
 
@@ -75,7 +76,7 @@ information are sample values; no live infrastructure or bearer URLs are shown.
 
 <details>
 <summary><strong>Share links — one cluster, selected permissions, and an expiry</strong></summary>
-<p align="center"><img src="docs/assets/demo-sharing.png" alt="Share links page with a one-hour expiry, independent configuration and log permissions, and a list of revocable temporary and permanent links." width="100%"></p>
+<p align="center"><img src="docs/assets/demo-sharing.png" alt="Share links page with expiry and permission controls, plus Edit, Revoke link, and Delete actions for generated links." width="100%"></p>
 </details>
 
 <details>
@@ -183,6 +184,12 @@ Anyone with the URL can use it within its permissions, so share it with the inte
 audience. See the [configuration guide](docs/configuration.md#viewing-links) for
 deployment details.
 
+Use **Edit** next to a generated link to change its name, permissions, or expiration.
+**Keep current expiry** preserves its existing deadline; choosing a duration starts
+that period from the time you save. An expired link can be renewed, while a revoked
+link stays revoked. The URL and cluster remain unchanged. **Delete** opens a
+confirmation and permanently removes the link and its access.
+
 <p align="center">
   <img src="docs/assets/topology.svg" alt="Radial topology illustration with one master at the center and six replicas arranged around it, with fit and zoom controls." width="100%">
   <br><sub>Radial topology illustration · one master and six replicas · the built-in demo contains three Redis instances</sub>
@@ -193,6 +200,18 @@ a master promotion. During promotion, `redis3` moves to the center and the
 replication arrows follow the newly observed upstream relationships.
 
 ## Run with Docker
+
+Build an image locally with the helper in the `script` directory:
+
+```bash
+./script/make-docker.sh
+```
+
+It produces `sentinel-atlas:local` by default. Configure `IMAGE_NAME`, `IMAGE_TAG`,
+`BUILD_TARGET`, and `PLATFORMS` through environment variables or command-line options.
+Publishing is disabled unless you explicitly set `PUSH=true` or use `--push`.
+Use `--dry-run` to inspect the command. The [Docker guide](docs/docker.md#build-and-optionally-publish-an-image)
+covers Docker Hub publishing, prebuilt-image Compose, runtime variables, and volumes.
 
 Copy `.env.example` to `.env`, choose your administrator password, and set
 `REDIS_URL` to an endpoint reachable from Docker. Then:

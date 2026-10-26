@@ -193,6 +193,91 @@ class WorkspaceTests(unittest.TestCase):
         for token in ('short', 'x'*64):
             self.assertEqual(self.viewer.get('/s/' + token).status_code, 404)
 
+    def test_edit_preserves_url_cluster_and_expiry_and_updates_access(self):
+        link_id, token = self.create_link(config='on', logs='on', details='on', events='on')
+        before = self.viewer.get(f'/s/{token}/api/cluster').json
+        with self.store.session() as db:
+            previous = db.get(ShareLink, link_id)
+            expiry, created = previous.expires_at, previous.created_at
+        response = self.client.get(f'/shares?edit={link_id}')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('value="keep" selected', response.get_data(as_text=True))
+        self.post('/shares', {'action': 'edit', 'link_id': link_id, 'label': 'Status board', 'duration': 'keep', 'cluster': 'another-cluster'})
+        after = self.viewer.get(f'/s/{token}/api/cluster').json
+        self.assertNotEqual(before['share_revision'], after['share_revision'])
+        self.assertNotIn('configuration', after['nodes'][0]['redis'])
+        self.assertEqual(after['nodes'][0]['hardware'], {})
+        self.assertEqual(after['events'], [])
+        self.assertEqual(self.viewer.get(f'/s/{token}/api/logs/redis1/redis').status_code, 403)
+        with self.store.session() as db:
+            link = db.get(ShareLink, link_id)
+            self.assertEqual(link.label, 'Status board')
+            self.assertEqual(link.token_hash, digest(token))
+            self.assertEqual(link.cluster, 'redis-main')
+            self.assertEqual(link.expires_at, expiry)
+            self.assertEqual(link.created_at, created)
+        self.assertIn('Status board', self.viewer.get(f'/s/{token}').get_data(as_text=True))
+        self.post('/shares', {'action': 'edit', 'link_id': link_id, 'label': 'Status board', 'duration': 'permanent', 'config': 'on', 'logs': 'on'})
+        with self.store.session() as db:
+            self.assertIsNone(db.get(ShareLink, link_id).expires_at)
+        self.assertIn('configuration', self.viewer.get(f'/s/{token}/api/cluster').json['nodes'][0]['redis'])
+        self.assertEqual(self.viewer.get(f'/s/{token}/api/logs/redis1/redis').status_code, 200)
+
+    def test_edit_can_renew_expired_links_but_not_revoked_links(self):
+        link_id, token = self.create_link()
+        with self.store.session.begin() as db:
+            db.get(ShareLink, link_id).expires_at = time.time()-1
+        self.assertEqual(self.viewer.get(f'/s/{token}/api/cluster').status_code, 404)
+        now = time.time()
+        self.post('/shares', {'action': 'edit', 'link_id': link_id, 'label': 'Renewed', 'duration': '3600'})
+        self.assertEqual(self.viewer.get(f'/s/{token}/api/cluster').status_code, 200)
+        with self.store.session() as db:
+            expiry = db.get(ShareLink, link_id).expires_at
+            self.assertGreaterEqual(expiry, now+3600)
+            self.assertLess(expiry, time.time()+3601)
+        self.post('/shares', {'action': 'revoke', 'link_id': link_id})
+        self.post('/shares', {'action': 'edit', 'link_id': link_id, 'label': 'Reactivated', 'duration': 'permanent'})
+        self.assertEqual(self.viewer.get(f'/s/{token}/api/cluster').status_code, 404)
+        with self.store.session() as db:
+            self.assertEqual(db.get(ShareLink, link_id).label, 'Renewed')
+
+    def test_delete_disables_url_and_removes_active_expired_and_revoked_links(self):
+        for state in ('active', 'expired', 'revoked'):
+            with self.subTest(state=state):
+                link_id, token = self.create_link()
+                if state == 'expired':
+                    with self.store.session.begin() as db:
+                        db.get(ShareLink, link_id).expires_at = time.time()-1
+                elif state == 'revoked':
+                    self.post('/shares', {'action': 'revoke', 'link_id': link_id})
+                self.assertEqual(self.client.get(f'/shares?delete={link_id}').status_code, 200)
+                with self.store.session() as db:
+                    self.assertIsNotNone(db.get(ShareLink, link_id), 'Opening the confirmation must not delete a link')
+                self.post('/shares', {'action': 'delete', 'link_id': link_id})
+                with self.store.session() as db:
+                    self.assertIsNone(db.get(ShareLink, link_id))
+                self.assertEqual(self.viewer.get(f'/s/{token}').status_code, 404)
+                self.assertEqual(self.viewer.get(f'/s/{token}/api/cluster').status_code, 404)
+
+    def test_edit_and_delete_enforce_ownership_csrf_and_atomic_validation(self):
+        link_id, token = self.create_link(logs='on')
+        self.store.create_user('other', 'other-password')
+        other = self.app.test_client()
+        self.login(other, 'other', 'other-password')
+        for action in ('edit', 'delete'):
+            self.assertEqual(self.client.post('/shares', data={'action': action, 'link_id': link_id}).status_code, 400)
+            self.assertEqual(self.client.get(f'/shares?{action}=not-an-id').status_code, 404)
+            self.assertEqual(other.get(f'/shares?{action}={link_id}').status_code, 404)
+            self.assertEqual(self.post('/shares', {'action': action, 'link_id': link_id, 'label': 'Stolen'}, other).status_code, 404)
+            self.assertEqual(self.post('/shares', {'action': action, 'link_id': 999999, 'label': 'Missing'}).status_code, 404)
+        for values in ({'label': ''}, {'label': 'x'*101}, {'duration': 'invalid'}):
+            self.post('/shares', dict({'action': 'edit', 'link_id': link_id, 'label': 'Invalid update', 'duration': 'keep'}, **values))
+        with self.store.session() as db:
+            link = db.get(ShareLink, link_id)
+            self.assertEqual(link.label, 'Incident handoff')
+            self.assertTrue(link.allow_logs)
+        self.assertEqual(self.viewer.get(f'/s/{token}/api/logs/redis1/redis').status_code, 200)
+
     def test_cluster_scoping_includes_events_and_logs_and_never_falls_back(self):
         demo = self.monitor.sample()
         records = {}

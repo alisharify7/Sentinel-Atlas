@@ -113,3 +113,9 @@
 .dependency-grid span { display: block; font-size: 10px; color: #7f96b0; margin-top: 6px; }
 @media(max-width:1050px) { .dependency-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 @media(max-width:760px) { .about-hero { padding: 24px; }.about-identity { flex-direction: column; align-items: flex-start; gap: 18px; }.about-identity>img { width: 66px; height: 66px; }.about-identity h2 { font-size: 23px; }.creator-links, .dependency-grid { grid-template-columns: 1fr; } }
+.share-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+.share-actions a { text-decoration: none; }
+.share-row>.share-actions { flex-shrink: 0; }
+.share-delete-confirm { padding: 24px; margin-bottom: 24px; border-color: #ebc8d1; background: #fff6f8; }
+.share-delete-confirm h2 { color: #91465a; margin: 7px 0; }
+.share-delete-confirm p { font-size: 12px; color: #956a79; margin-bottom: 20px; }

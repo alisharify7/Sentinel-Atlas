@@ -37,13 +37,17 @@ function meter(label, value, total) {
 }
 let state = null, selected = initialQuery?.get('node')||null, selectedTab = 'overview', configFilter = '', scenario = 'healthy', activeCluster=initialQuery?.get('cluster')||'', lastRender = null, serverConnected = false, accessLost=false;
 
+function reloadSharedView() {
+  accessLost=true;
+  $('mainContent')?.replaceChildren();
+  location.reload();
+}
+
 async function apiFetch(url, options) {
   if(sharedView&&url.startsWith('/api/'))url=(pageContext.apiBase||'/api')+url.slice(4);
   const response=await fetch(url,options);
   if(sharedView&&[403,404].includes(response.status)) {
-    accessLost=true;
-    $('mainContent')?.replaceChildren();
-    location.reload();
+    reloadSharedView();
     throw Error('Viewing link unavailable');
   }
   if(response.status===401){location.assign('/login?next='+encodeURIComponent(location.pathname));throw Error('Login required');}
@@ -407,6 +411,7 @@ async function fetchSnapshot() {
     const response=await apiFetch(`/api/cluster?scenario=${encodeURIComponent(scenario)}&cluster=${encodeURIComponent(activeCluster)}`,{cache:'no-store'});
     if (!response.ok) throw Error('request failed');
     const data=await response.json();
+    if(sharedView&&data.share_revision!==pageContext.shareRevision) {reloadSharedView();return;}
     if(requestedCluster!==activeCluster||requestedScenario!==scenario)return;
     serverConnected=true;
     if (data.updated_at!==lastRender||!state) {lastRender=data.updated_at;render(data);} else updateTime();
