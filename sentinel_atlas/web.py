@@ -8,6 +8,7 @@ from .monitoring.monitor import LiveMonitor
 from .settings import Settings
 from .auth import init_auth
 from .sharing import init_sharing
+from .terminal import init_terminal
 
 from .paths import ROOT_DIR, load_environment
 
@@ -29,6 +30,7 @@ def create_app(monitor=None, config=None):
         return monitor.snapshot(cluster)
 
     init_sharing(app, monitor, snapshot_for)
+    init_terminal(app, monitor)
 
     @app.context_processor
     def workspace_context():

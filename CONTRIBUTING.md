@@ -38,7 +38,9 @@ For authentication and sharing changes, test authorization through the API as we
 as the UI, including expiry, revocation, and access to other clusters. Optional
 Docker integration checks are documented in the development guide.
 
-Preserve the product's read-only Redis behavior. Keep credentials out of telemetry,
+Keep background monitoring and viewer access read-only; live terminal commands
+require administrator access. Keep the demo simulation separate from live Redis.
+Keep credentials out of telemetry,
 logs, exports, fixtures, and commits. Support both SQLite and PostgreSQL account
 stores and keep upgrades compatible with existing account databases.
 

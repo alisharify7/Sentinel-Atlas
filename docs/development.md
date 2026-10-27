@@ -9,6 +9,7 @@ sentinel-atlas/
 │   ├── __main__.py               # python -m sentinel_atlas
 │   ├── cli.py                    # Waitress server and CLI lifecycle
 │   ├── web.py                    # Flask routes and application factory
+│   ├── terminal.py               # Administrator command API and database isolation
 │   ├── auth.py                   # Login, CSRF, profiles, account management
 │   ├── sharing.py                # Revocable scoped public views
 │   ├── database.py               # SQLite/PostgreSQL account models
@@ -90,6 +91,16 @@ The integration scripts create only temporary test resources.
 keep it stdlib-only. The Ansible callback is loaded outside normal package import
 flow and must only emit whitelisted public data. Keep credentials out of task
 arguments, HTTP responses, Docker layers, and committed configuration files.
+
+Node terminals use a separate administrator-only POST endpoint with CSRF checks.
+They never borrow monitoring connections. The SSH terminal sends command arguments
+as a base64 JSON payload over stdin to avoid shell and Ansible template evaluation;
+its dedicated callback emits only the sanitized command result. Keep viewers and
+public sharing routes read-only. `tests/test_terminal.py` checks these boundaries,
+and the Docker integration script exercises real Redis database isolation.
+`monitoring/demo_terminal.py` supplies a bounded, account-private simulation for
+demo commands. It must never open a network connection or start a subprocess;
+the demo tests enforce that boundary.
 
 Monitoring pages render through `workspace.html` and small panel templates. Keep
 page-specific scripts tolerant of absent panels, and avoid fetching logs outside

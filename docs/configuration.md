@@ -322,6 +322,12 @@ Process environment overrides `.env`. CLI `--inventory`, `--targets`, `--host`,
 Preview labelled sample data with `python -m sentinel_atlas --demo`. Login is required in
 demo mode too; it makes no monitoring connections.
 
+Demo administrators can open a node's Terminal tab to try simulated Redis commands
+and database switching. The demo never executes Redis commands or SSH processes.
+Sample writes are private to each account, limited to 128 keys / 64 KiB, and lost
+on server restart. Switch to a live configuration to run commands on real nodes;
+live command execution requires an administrator and uses the configured Redis ACL.
+
 An external Ansible repository can keep a `visualize.sh` launcher that points to
 this checkout. It supplies inventory/config paths and installs the optional
 Ansible requirements. Sentinel Atlas also runs independently with `python -m sentinel_atlas`.

@@ -1,4 +1,5 @@
-"""Executed on the VM by Ansible. Read-only; credentials arrive via stdin."""
+"""Executed on the VM by Ansible. Credentials and command data arrive via stdin."""
+import base64
 import concurrent.futures
 import json
 import os
@@ -260,9 +261,84 @@ def probe(config):
                       "tasks": number(unit.get('TasksCurrent'))}}
 
 
+def terminal_reply(value, depth=0):
+    """Readable RESP output shared by direct and SSH terminals."""
+    if depth > 20:
+        return '… nested reply truncated'
+    if value is None:
+        return '(nil)'
+    if isinstance(value, Exception):
+        return '(error) ' + str(value)
+    if isinstance(value, bytes):
+        value = value.decode('utf-8', errors='backslashreplace')
+    if isinstance(value, str):
+        value = value[:65536]
+        return value if '\n' in value else json.dumps(value, ensure_ascii=False)
+    if isinstance(value, int):
+        return '(integer) ' + str(value)
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return '(empty array)'
+        lines, size = [], 0
+        for index, item in enumerate(value[:1000], 1):
+            line = f'{index}) {terminal_reply(item, depth + 1)}'
+            lines.append(line)
+            size += len(line)
+            if size > 65536:
+                lines.append('… reply truncated')
+                break
+        if len(value) > 1000:
+            lines.append('… array truncated')
+        return '\n'.join(lines)
+    return str(value)
+
+
+def terminal(config):
+    """Execute one Redis command with argv, never a shell or redis-cli options."""
+    payload = json.loads(base64.b64decode(config['terminal']))
+    nspawn = config.get('deployment') == 'nspawn'
+    password = config.get('password')
+    args = ['systemd-run', '--machine=' + config['container'], '--wait', '--pipe', '--quiet',
+            '--collect', '--property=Type=exec', '--property=RuntimeMaxSec=4s',
+            '--expand-environment=no'] if nspawn else []
+    if nspawn and password:
+        args += ['--setenv=REDISCLI_AUTH']
+    args += [config.get('redis_cli', '/usr/bin/redis-cli'), '--json', '-e',
+             '-h', config.get('host', '127.0.0.1'), '-p', str(config['port']),
+             '-n', str(payload['database'])]
+    if config.get('username'):
+        args += ['--user', config['username']]
+    if config.get('tls'):
+        args += ['--tls']
+        if config.get('tls_ca'):
+            args += ['--cacert', config['tls_ca']]
+    # The controller rejects command names starting with a dash. redis-cli stops
+    # parsing options at the command name, so values remain literal arguments.
+    args += payload['args']
+    environment = dict(os.environ)
+    environment.pop('REDISCLI_AUTH', None)
+    if password:
+        environment['REDISCLI_AUTH'] = password
+    try:
+        result = subprocess.run(args, env=environment, capture_output=True, text=True, timeout=4)
+        output = (result.stdout + result.stderr).strip()
+        ok = result.returncode == 0
+        if ok:
+            try:
+                output = terminal_reply(json.loads(output))
+            except ValueError:
+                pass
+    except subprocess.TimeoutExpired:
+        output, ok = 'Command timed out; it may have executed. Check Redis before retrying.', False
+    except (OSError, UnicodeError):
+        output, ok = 'Redis command unavailable. Check redis-cli and the node connection settings.', False
+    return {'ok': ok, 'output': redact_log(output, [password])[:65536]}
+
+
 if __name__ == '__main__':
     try:
-        print(json.dumps(probe(json.load(sys.stdin)), separators=(',', ':')))
+        config = json.load(sys.stdin)
+        print(json.dumps(terminal(config) if config.get('terminal') else probe(config), separators=(',', ':')))
     except Exception:
         # Never serialize the input, subprocess arguments, or credential-bearing exceptions.
         print(json.dumps({"probe_error": "telemetry_unavailable"}))

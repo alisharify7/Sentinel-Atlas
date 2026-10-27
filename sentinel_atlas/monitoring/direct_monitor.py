@@ -129,6 +129,13 @@ class DirectMonitor(LiveMonitor):
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
             return dict(pool.map(self.collect_target, self.targets))
 
+    def terminal_command(self, name, service, args, database):
+        from ..terminal import direct_command
+        for metadata, clients in self.targets:
+            if metadata['name'] == name and service in clients:
+                return direct_command(clients[service], args, database)
+        raise RuntimeError('Unknown terminal target.')
+
     def stop(self):
         super().stop()
         # The worker may still be finishing a bounded read; redis-py pools can reconnect.

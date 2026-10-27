@@ -5,8 +5,8 @@
 <h1 align="center">Sentinel Atlas 2.0.0</h1>
 
 <p align="center">
-  A self-hosted, read-only observatory for Redis and Redis Sentinel.<br>
-  Explore your cluster. Follow replication. Share the right view.
+  A self-hosted observatory with administrator terminals for Redis and Redis Sentinel.<br>
+  Explore your cluster. Run commands. Share the right view.
 </p>
 
 <p align="center">
@@ -17,6 +17,7 @@
   <a href="#quick-start">Quick start</a> &nbsp;·&nbsp;
   <a href="#workspace-screenshots">Screenshots</a> &nbsp;·&nbsp;
   <a href="#connect-your-redis">Connect Redis</a> &nbsp;·&nbsp;
+  <a href="#run-commands-on-a-node">Node terminals</a> &nbsp;·&nbsp;
   <a href="docs/docker.md">Docker</a> &nbsp;·&nbsp;
   <a href="docs/configuration.md">Configuration guide</a> &nbsp;·&nbsp;
   <a href="CHANGELOG.md">Release notes</a> &nbsp;·&nbsp;
@@ -30,7 +31,7 @@
 ## Your Redis, in view
 
 Sentinel Atlas brings cluster health, live replication, instance configuration,
-and service logs into a workspace with dedicated pages. Start with an automatically
+service logs, and administrator terminals into a workspace with dedicated pages. Start with an automatically
 arranged topology, zoom at the cursor, and move nodes while their links follow.
 Lock a view for an incident, export the complete map, or share one cluster through
 a revocable link with the permissions and lifetime you choose.
@@ -53,6 +54,7 @@ for Linux hardware, storage, and live service logs.
 | **Replication & Sentinel** | Follow observed upstream links, sampled offset gaps, full-sync progress, role changes, quorum, and master agreement |
 | **Instance explorer** | Search by name or address, filter by role or availability, and inspect configuration, memory, persistence, and optional server/storage details |
 | **Live logs** | Watch Redis and Sentinel output with filtering, pause/resume, and follow-scrolling through server probes |
+| **Node terminals** | Run live Redis or Sentinel commands as an administrator, switch databases with `SELECT` or the DB control, and recall commands with ↑/↓ |
 | **Cluster activity** | Filter discovery, outages, recoveries, warnings, and master promotions for the selected cluster |
 | **Multiple clusters** | Switch between caches and replication groups; keep the selected cluster and instance as you navigate |
 | **Profiles & sessions** | Update your username, password, display name, contact information, team, biography, and timezone; sign out other sessions |
@@ -62,8 +64,29 @@ for Linux hardware, storage, and live service logs.
 | **Workspace accounts** | Require login for the private workspace, manage admin/viewer accounts, and revoke sessions and links when disabling an account |
 | **Open source** | Find creator credits, community acknowledgments, source, license, and contribution links inside the app |
 
-The app observes Redis. It does not trigger failovers, restart services, change
-Redis configuration, or manage Redis Cluster hash slots.
+Background monitoring observes Redis without changing it. Administrator terminals
+execute commands immediately with the configured Redis account's permissions.
+Viewer accounts and shared links remain read-only.
+
+### Run commands on a node
+
+On **Live cluster** or **Instances**, select a node and open **Terminal** while
+signed in as an administrator. Choose Redis or Sentinel where both are configured.
+Use commands such as `PING`, `INFO`, `SET "my key" "hello world"`, or
+`GET "my key"`. Enter `SELECT 2`, or enter `2` in the DB control and click
+**Switch**, to change the selected Redis database. Redis validates the database;
+a failed switch leaves the previous selection intact. Sentinel uses database 0.
+
+Each node and service retains its database, history, and output while you navigate
+within the page. Use ↑/↓ for history, `HELP` for examples, and `clear` or Ctrl+L
+to clear output. Reloading the page clears this browser memory.
+Direct connections reuse configured authentication and TLS settings;
+SSH probes execute through the existing inventory and `redis-cli` installation.
+
+Each command uses a separate connection with a short execution timeout. Transactions,
+subscriptions, `MONITOR`, and connection mode changes need a persistent Redis client
+and are unavailable in this terminal. A timeout can leave a command's outcome
+uncertain; check Redis before retrying a write.
 
 ## Workspace screenshots
 
@@ -73,6 +96,11 @@ information are sample values; no live infrastructure or bearer URLs are shown.
 <details>
 <summary><strong>Overview — health and the signals that need attention</strong></summary>
 <p align="center"><img src="docs/assets/demo-overview.png" alt="Overview page showing cluster summary cards, an All clear health panel, quick links, and recent cluster events." width="100%"></p>
+</details>
+
+<details open>
+<summary><strong>Node terminal — commands, database switching, and simulated demo replies</strong></summary>
+<p align="center"><img src="docs/assets/demo-terminal.png" alt="Instances page with the master node selected and an interactive demo terminal showing PING, SELECT 2, and GET demo:environment returning staging, alongside Redis service and database controls." width="100%"></p>
 </details>
 
 <details>
@@ -136,6 +164,37 @@ python -m sentinel_atlas --demo
 Open **[localhost:5050](http://127.0.0.1:5050)** and sign in. Demo mode uses clearly
 labelled sample data and includes healthy, outage, and master-promotion scenarios.
 It makes no Redis or SSH connections. Login is required in demo mode too.
+
+### Try the demo terminal
+
+Open **Instances**, select **redis2** (the master in the Healthy scenario), and
+choose **Terminal**. The **DEMO TERMINAL · SIMULATED** label distinguishes sample
+commands from a live connection. Try:
+
+```text
+PING
+GET demo:message
+SET "my key" "hello world"
+GET "my key"
+SELECT 2
+GET demo:environment
+GET "my key"
+SELECT 0
+GET "my key"
+```
+
+The last `GET` returns `"hello world"`; database 2 has its own sample keys. The DB
+control also switches databases 0–15. Try ↑/↓ to recall commands and Ctrl+L to
+clear output. Demo replicas reflect the master's sample writes and reject writes
+themselves. Master-promotion and outage scenarios also apply to terminal commands.
+Choose **Sentinel** to try `SENTINEL MASTER redis-main` or
+`SENTINEL GET-MASTER-ADDR-BY-NAME redis-main`.
+
+The simulation supports string reads/writes, counters, key discovery, `PING`,
+`INFO`, `ECHO`, and a few Sentinel inspection commands. Unsupported commands return
+an explanation. Demo datasets are private to each administrator, limited to 128
+keys / 64 KiB across 16 databases, and discarded when the server restarts; only the
+32 most recently active demo datasets are retained. They never reach live Redis.
 
 ### Explore the topology
 

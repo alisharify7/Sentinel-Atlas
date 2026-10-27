@@ -88,8 +88,23 @@ try:
             assert snapshot['summary']['redis_up']==1 and snapshot['summary']['sentinel_total']==0
             assert snapshot['nodes'][0]['redis']['role']=='master'
             assert password not in json.dumps(snapshot)
+            def command(text, database=0):
+                from sentinel_atlas.terminal import parse_command
+                args, selected = parse_command(text, database, 'redis')
+                result = monitor.terminal_command('redis', 'redis', args, database)
+                return dict(result, database=selected if result['ok'] else database)
+            assert command('PING')['output'] == '"PONG"'
+            assert command('SELECT 2')['database'] == 2
+            assert command('SET "terminal key" "hello world"', 2)['ok']
+            assert command('GET "terminal key"', 2)['output'] == '"hello world"'
+            assert command('GET "terminal key"', 0)['output'] == '(nil)'
+            assert not command('SELECT 9999', 2)['ok']
+            assert command('MGET "terminal key" missing', 2)['output'] == '1) "hello world"\n2) (nil)'
+            assert monitor.targets[0][1]['redis'].connection_pool.connection_kwargs['db'] == 0
+            monitor.poll_once()
+            assert monitor.snapshot()['status'] == 'healthy'
         finally:monitor.stop()
-    print('Standalone Redis: authenticated direct monitoring, metrics, and credential filtering passed.',flush=True)
+    print('Standalone Redis: monitoring, credential filtering, terminal reads/writes, database switching, and connection isolation passed.',flush=True)
     master_ip=docker('inspect','--format','{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}',cache)
     docker('run','--rm','-d','--name',replica,'-p','127.0.0.1::6379','redis:7-alpine','redis-server',
         '--requirepass',password,'--masterauth',password,'--replicaof',master_ip,'6379','--save','','--appendonly','no')

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Added administrator terminals to each node's inspector, with Redis/Sentinel
+  service selection, live command output, command history, and database switching.
+- Supported terminal commands through both direct Redis connections and existing
+  SSH/Ansible inventories, with isolated database selection and bounded requests.
+- Added an interactive demo terminal with simulated Redis commands, separate
+  databases, replica write protection, Sentinel replies, and private sample data.
+
 ## 2.0.0 — 2026-10-26
 
 - Added dedicated Overview, Live cluster, Instances, Logs, Activity, Profile,

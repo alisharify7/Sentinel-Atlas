@@ -1,3 +1,4 @@
+import base64
 import copy
 import json
 import os
@@ -169,15 +170,15 @@ class LiveMonitor(ClusterState):
         self.thread = None
         self.collector_lock = threading.Lock()
 
-    def collect(self):
+    def run_playbook(self, playbook, variables, callback='dashboard_json'):
         executable = self.settings.ansible_playbook
         if not Path(executable).is_file():
             executable = shutil.which(executable)
         if not executable:
             raise RuntimeError('Ansible is unavailable. Set SENTINEL_ANSIBLE_PLAYBOOK to your ansible-playbook executable.')
         env = dict(os.environ,
-            ANSIBLE_STDOUT_CALLBACK='dashboard_json', ANSIBLE_CALLBACK_PLUGINS=str(PROBE_DIR / 'callback_plugins'),
-            ANSIBLE_CALLBACKS_ENABLED='dashboard_json', ANSIBLE_LOG_PATH=os.devnull, ANSIBLE_NOCOLOR='1',
+            ANSIBLE_STDOUT_CALLBACK=callback, ANSIBLE_CALLBACK_PLUGINS=str(PROBE_DIR / 'callback_plugins'),
+            ANSIBLE_CALLBACKS_ENABLED=callback, ANSIBLE_LOG_PATH=os.devnull, ANSIBLE_NOCOLOR='1',
             ANSIBLE_FORCE_COLOR='0', ANSIBLE_TIMEOUT=str(self.settings.ssh_timeout), ANSIBLE_RETRY_FILES_ENABLED='False')
         if self.settings.ansible_config:
             env['ANSIBLE_CONFIG'] = str(self.settings.ansible_config)
@@ -185,13 +186,11 @@ class LiveMonitor(ClusterState):
             env['ANSIBLE_VAULT_PASSWORD_FILE'] = str(self.settings.vault_password_file)
         workdir = self.settings.ansible_config.parent if self.settings.ansible_config else self.settings.inventory.parent
         process = subprocess.Popen([executable, '-i', str(self.settings.inventory),
-            str(PROBE_DIR / 'probe.yml'), '--forks', '10', '--extra-vars',
-            json.dumps({'dashboard_redis_group': self.settings.redis_group,
-                        'dashboard_sentinel_group': self.settings.sentinel_group})], cwd=workdir, env=env,
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            str(PROBE_DIR / playbook), '--forks', '10', '--extra-vars', '@/dev/stdin'], cwd=workdir, env=env,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, start_new_session=True)
         try:
-            stdout, _ = process.communicate(timeout=self.timeout)
+            stdout, _ = process.communicate(input=json.dumps(variables), timeout=self.timeout)
         except subprocess.TimeoutExpired:
             os.killpg(process.pid, signal.SIGTERM)
             try:
@@ -199,11 +198,36 @@ class LiveMonitor(ClusterState):
             except subprocess.TimeoutExpired:
                 os.killpg(process.pid, signal.SIGKILL)
                 stdout, _ = process.communicate()
+            if callback != 'dashboard_json':
+                raise RuntimeError('Terminal transport timed out.') from None
             raise CollectionError('Collection timed out. Last observations are marked stale.', parse_records(stdout)) from None
+        return stdout
+
+    def collect(self):
+        stdout = self.run_playbook('probe.yml', {'dashboard_redis_group': self.settings.redis_group,
+                                              'dashboard_sentinel_group': self.settings.sentinel_group})
         records = parse_records(stdout)
         if not records:
             raise CollectionError('Cannot read inventory or probe results. Check Ansible, vault access, and inventory groups.')
         return records
+
+    def terminal_command(self, name, service, args, database):
+        stdout = self.run_playbook('terminal.yml', {
+            'dashboard_terminal_node': name, 'dashboard_terminal_service': service,
+            # User text must never be interpreted as an Ansible/Jinja expression.
+            'dashboard_terminal_payload': base64.b64encode(json.dumps({'args': args, 'database': database}).encode()).decode(),
+            'dashboard_redis_group': self.settings.redis_group,
+            'dashboard_sentinel_group': self.settings.sentinel_group}, 'terminal_json')
+        for line in stdout.splitlines():
+            try:
+                value = json.loads(line)
+                if value.get('node') == name and isinstance(value.get('result'), dict):
+                    result = value['result']
+                    if type(result.get('ok')) is bool and isinstance(result.get('output'), str):
+                        return {'ok': result['ok'], 'output': result['output'][:65536]}
+            except (ValueError, TypeError, AttributeError):
+                continue
+        raise RuntimeError('No terminal result received.')
 
     def poll_once(self):
         with self.collector_lock:

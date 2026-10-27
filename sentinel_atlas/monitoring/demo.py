@@ -2,11 +2,17 @@
 import math
 import time
 from .monitor import ClusterState
+from .demo_terminal import DemoTerminal
 
 
 class DemoMonitor(ClusterState):
     def __init__(self, interval=5):
         super().__init__(interval, 'demo')
+        self.terminal = DemoTerminal()
+
+    def demo_terminal_command(self, user_id, name, service, args, database):
+        with self.lock:
+            return self.terminal.execute(user_id, self.nodes[name], list(self.nodes.values()), service, args, database)
 
     def sample(self, scenario='healthy'):
         now = time.time()

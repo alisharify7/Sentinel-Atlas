@@ -1,0 +1,39 @@
+---
+- name: Execute a Redis terminal command
+  hosts: "{{ dashboard_redis_group }}:{{ dashboard_sentinel_group }}"
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Execute on the exact selected node
+      when: inventory_hostname == dashboard_terminal_node
+      block:
+        - name: Validate terminal service membership
+          ansible.builtin.assert:
+            that:
+              - dashboard_terminal_service in ['redis', 'sentinel']
+              - inventory_hostname in groups.get(dashboard_redis_group if dashboard_terminal_service == 'redis' else dashboard_sentinel_group, [])
+            quiet: true
+        - name: Execute Redis command privately
+          ansible.builtin.command:
+            argv:
+              - "{{ dashboard_python | default('/usr/bin/python3') }}"
+              - -c
+              - "{{ lookup('ansible.builtin.file', playbook_dir ~ '/remote_probe.py') }}"
+            stdin: >-
+              {{ {'terminal': dashboard_terminal_payload,
+                  'deployment': dashboard_deployment | default('nspawn' if container_name is defined else 'host'),
+                  'container': container_name | default(''),
+                  'redis_cli': dashboard_redis_cli | default('/usr/bin/redis-cli'),
+                  'host': (dashboard_redis_host | default('127.0.0.1')) if dashboard_terminal_service == 'redis' else (dashboard_sentinel_host | default('127.0.0.1')),
+                  'port': (redis_listen_port | default(6379)) if dashboard_terminal_service == 'redis' else (redis_sentinel_port | default(26379)),
+                  'username': (redis_username | default('')) if dashboard_terminal_service == 'redis' else (sentinel_username | default('')),
+                  'password': (redis_password | default('')) if dashboard_terminal_service == 'redis' else (sentinel_password | default('')),
+                  'tls': dashboard_tls | default(false) | bool,
+                  'tls_ca': dashboard_tls_ca | default('')} | to_json }}
+          register: dashboard_terminal_result
+          changed_when: false
+          no_log: true
+        - name: Dashboard terminal result
+          ansible.builtin.debug:
+            msg:
+              terminal_result: "{{ dashboard_terminal_result.stdout | from_json }}"

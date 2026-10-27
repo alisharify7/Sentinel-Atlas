@@ -26,7 +26,7 @@ function element(id) {
         return child;
       });
       if (id==='inspector') {
-        for (const child of ['configRows','configCount','configSearch']) elements.delete(child);
+        for (const child of ['configRows','configCount','configSearch','redisTerminal','terminalForm','terminalInput','terminalPrompt','terminalOutput','terminalDatabaseForm','terminalDatabase','terminalService']) elements.delete(child);
         for (const match of value.matchAll(/id="([^"]+)"/g)) elements.set(match[1],element(match[1]));
       }
     },
@@ -39,7 +39,8 @@ function element(id) {
     scrollIntoView() { this.scrolled=true; }
   };
 }
-const document={activeElement:null,body:element('body'),getElementById:id=>elements.get(id)||null,addEventListener:(kind,fn)=>listeners[kind]=fn};
+const document={activeElement:null,body:element('body'),getElementById:id=>elements.get(id)||null,addEventListener:(kind,fn)=>listeners[kind]=fn,querySelector:()=>({content:'test-csrf'})};
+document.body.dataset.terminal='true';
 for (const id of ['inspector','graphContainer','graphEmpty','graphNodes','graphLines','topologyStats','sentinelNetwork','fleetBody','graphToolbar','graphViewport','graphStage','graphScene','graphZoom','graphZoomIn','graphZoomOut','graphFit','graphReset','graphLock','graphHint','graphFullscreen','graphExport','graphExportStatus']) elements.set(id,element(id));
 let mobile=false;
 const context=vm.createContext({document,Intl,console,setTimeout,Blob,TextEncoder,window:{matchMedia:()=>({matches:mobile})}});
@@ -269,5 +270,50 @@ const click=async (name,tab)=>listeners.click({target:{closest:selector=>selecto
   assert.equal(elements.get('graphExport').hidden,true);
   assert.throws(()=>run('graphExportSnapshot()'),/no Redis nodes/);
   assert.match(elements.get('inspector').innerHTML,/Inspect an instance/);
+  // Terminal state and drafts survive polling and switching between nodes.
+  reset();
+  run("state.cluster='main';state.mode='live';selectedTab='terminal';renderInspector();");
+  const terminalInput=elements.get('terminalInput');
+  await listeners.click({target:{closest:selector=>selector==='[data-node]'?elements.get('inspector'):null}});
+  assert.equal(run('selectedTab'),'terminal','Clicks inside the inspector must not reselect the node');
+  terminalInput.value='GET "a key"';terminalInput.dispatch('input');
+  run('renderInspector();');
+  assert.equal(elements.get('terminalInput'),terminalInput,'Polling preserves the terminal DOM');
+  assert.equal(terminalInput.value,'GET "a key"');
+  let request;
+  context.fetch=async(url,options)=>{request={url,...options};return {ok:true,status:200,json:async()=>({ok:true,output:'OK',database:3})};};
+  await run("executeTerminal('SELECT 3')");
+  assert.equal(JSON.parse(request.body).database,0);
+  assert.equal(JSON.parse(request.body).command,'SELECT 3');
+  assert.match(elements.get('terminalPrompt').textContent,/\[3\]>/);
+  elements.get('terminalInput').dispatch('keydown',{key:'ArrowUp'});
+  assert.equal(elements.get('terminalInput').value,'SELECT 3');
+  await click('replica-a','terminal');
+  assert.equal(run('terminalContext().session.database'),0,'Nodes keep independent databases');
+  await click('primary','terminal');
+  assert.equal(run('terminalContext().session.database'),3);
+  context.fetch=async()=>({ok:true,status:200,json:async()=>({ok:false,output:'(error) ERR DB index is out of range',database:3})});
+  await run("executeTerminal('SELECT 999')");
+  assert.equal(run('terminalContext().session.database'),3,'Failed SELECT preserves the database');
+  let complete;
+  context.fetch=()=>new Promise(resolve=>{complete=resolve;});
+  const pending=run("executeTerminal('GET a')");
+  await click('replica-b','terminal');
+  complete({ok:true,status:200,json:async()=>({ok:true,output:'<script>untrusted</script>',database:3})});
+  await pending;
+  assert.doesNotMatch(elements.get('terminalOutput').textContent,/untrusted/,'Late results stay with their original node');
+  await click('primary','terminal');
+  assert.match(elements.get('terminalOutput').textContent,/<script>untrusted<\/script>/,'Output is rendered as text');
+  assert.doesNotMatch(elements.get('terminalOutput').innerHTML,/<script>/);
+  elements.get('terminalService').dispatch('change',{target:{value:'sentinel'}});
+  assert.equal(run('terminalContext().service'),'sentinel');
+  assert.equal(run('terminalContext().session.database'),0);
+  run("state.mode='demo';renderInspector(true);");
+  assert.match(elements.get('inspector').innerHTML,/DEMO TERMINAL · SIMULATED/);
+  assert.match(elements.get('inspector').innerHTML,/Simulated commands only/);
+  context.fetch=async(url,options)=>{request={url,...options};return {ok:true,status:200,json:async()=>({ok:true,output:'"PONG"',database:0,demo:true})};};
+  await run("executeTerminal('PING')");
+  assert.equal(JSON.parse(request.body).command,'PING','Demo terminal accepts commands');
+  assert.match(elements.get('terminalOutput').textContent,/PONG/);
   console.log('UI checks passed: radial topology (1–100 nodes), fit/zoom, canvas and node dragging, live links, keyboard movement, view lock, fullscreen, polling preservation, failover, Sentinel health, configuration inspection, and mobile navigation.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

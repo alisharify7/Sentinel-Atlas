@@ -30,6 +30,7 @@ const badge = n => `<span class="role-badge ${role(n)}">${role(n) === 'down' ? '
 const detail = (label, value, mono=false) => `<div class="detail-row"><span>${esc(label)}</span><strong class="${mono?'mono':''}">${esc(value ?? '—')}</strong></div>`;
 const pageContext=document.body?.dataset||{}, sharedView=pageContext.shared==='true';
 const canConfigure=pageContext.config!=='false',canSeeDetails=pageContext.details!=='false';
+const canUseTerminal=!sharedView&&pageContext.terminal==='true';
 const initialQuery=typeof URLSearchParams!=='undefined'?new URLSearchParams(window.location?.search||''):null;
 function meter(label, value, total) {
   const p = percent(value,total);
@@ -330,9 +331,96 @@ function sentinelDetails(node) {
   return `<div class="inspector-section"><div class="inspector-status ${!s.up||!s.quorum_ok||node.stale?'error':''}">${icon('shield')}${status}</div><div class="detail-label">SENTINEL MONITOR</div>${detail('Monitored cluster',node.metadata.cluster)}${detail('Required quorum',s.up?s.required_quorum:'—')}${detail('Known Sentinel peers',s.up?s.other_sentinels:'—')}${detail('Known replicas',s.up?s.known_replicas:'—')}<div class="detail-rule"></div><div class="detail-label">REPORTED MASTER</div>${detail('Endpoint',s.up?`${s.master_ip}:${s.master_port}`:'—',true)}${detail('Flags',s.up?s.flags:'—',true)}<p class="muted-text">Each Sentinel reports its own master view. Compare the monitor cards to spot disagreement.</p></div>`;
 }
 
-function renderInspector() {
+const terminalSessions=new Map(), terminalServices=new Map();
+function terminalContext(node=state?.nodes.find(n=>n.name===selected)) {
+  if(!node)return null;
+  const nodeKey=JSON.stringify([state.cluster,node.name]);
+  const service=terminalServices.get(nodeKey)||(node.metadata.redis_member?'redis':'sentinel');
+  const key=JSON.stringify([state.cluster,node.name,service]);
+  if(!terminalSessions.has(key))terminalSessions.set(key,{database:0,entries:[],history:[],cursor:0,draft:'',savedDraft:'',busy:false});
+  return {node,nodeKey,service,key,session:terminalSessions.get(key)};
+}
+function terminalPrompt(context) {
+  const {node,service,session}=context;
+  const address=service==='sentinel'?`${node.metadata.sentinel_address||node.metadata.address}:${node.metadata.sentinel_port}`:endpoint(node);
+  return `${address}[${session.database}]>`;
+}
+function terminalDetails(node) {
+  const context=terminalContext(node),{session,service}=context;
+  const demo=state.mode==='demo';
+  return `<section id="redisTerminal" class="redis-terminal"><div class="terminal-toolbar"><span class="terminal-label">${icon('terminal')} ${demo?'DEMO TERMINAL · SIMULATED':'LIVE TERMINAL'}</span><button type="button" class="terminal-clear" data-terminal-clear>Clear</button></div>
+    <div class="terminal-controls"><label>Service <select id="terminalService" aria-label="Terminal service">${node.metadata.redis_member?`<option value="redis" ${service==='redis'?'selected':''}>Redis</option>`:''}${node.metadata.sentinel_member?`<option value="sentinel" ${service==='sentinel'?'selected':''}>Sentinel</option>`:''}</select></label><form id="terminalDatabaseForm"><label>DB <input id="terminalDatabase" type="number" min="0" max="2147483647" step="1" value="${session.database}" aria-label="Redis database" ${service==='sentinel'?'disabled':''}></label><button type="submit" ${service==='sentinel'||session.busy?'disabled':''}>Switch</button></form></div>
+    <pre id="terminalOutput" class="terminal-output" role="log" aria-live="polite" aria-relevant="additions text" aria-label="Redis command output" tabindex="0"></pre>
+    <form id="terminalForm" class="terminal-input-row"><label id="terminalPrompt" for="terminalInput">${esc(terminalPrompt(context))}</label><input id="terminalInput" aria-label="Redis command" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="16384" placeholder="PING" value="${esc(session.draft)}" ${session.busy?'disabled':''}><button type="submit" aria-label="Run Redis command" ${session.busy?'disabled':''}>Run</button></form>
+    <p class="terminal-help">${demo?'Simulated commands only · no Redis or SSH connections. Try PING, GET demo:message, SELECT 2, or SET on the master. Demo data is temporary and private to your account.':'Enter a Redis command. SELECT 2 switches databases. ↑/↓ history · Ctrl+L clears · HELP for examples. Commands run immediately using the configured Redis permissions.'}</p></section>`;
+}
+function updateTerminal(context=terminalContext(),focus=false) {
+  if(!context||selectedTab!=='terminal'||terminalContext()?.key!==context.key||!$('terminalOutput'))return;
+  const {session}=context, output=$('terminalOutput');
+  const atBottom=output.scrollTop+output.clientHeight>=output.scrollHeight-24;
+  output.textContent=session.entries.join('\n')+(session.busy?'\nExecuting…':'');
+  if(atBottom||focus)output.scrollTop=output.scrollHeight;
+  $('terminalPrompt').textContent=terminalPrompt(context);
+  $('terminalInput').value=session.draft;
+  const disabled=session.busy;
+  for(const control of $('terminalForm').querySelectorAll('input,button'))control.disabled=disabled;
+  for(const control of $('terminalDatabaseForm').querySelectorAll('input,button'))control.disabled=disabled||context.service==='sentinel';
+  $('terminalDatabase').value=session.database;
+  $('redisTerminal').setAttribute('aria-busy',String(session.busy));
+  if(focus&&!disabled)$('terminalInput').focus({preventScroll:true});
+}
+function appendTerminal(session,text) {
+  session.entries.push(text.slice(0,65536));
+  while(session.entries.length>100||session.entries.join('\n').length>131072)session.entries.shift();
+}
+async function executeTerminal(command,context=terminalContext()) {
+  if(!context||!canUseTerminal||context.session.busy||!command.trim())return;
+  const {session,node,service}=context;
+  session.draft='';session.savedDraft='';
+  if(session.history.at(-1)!==command)session.history.push(command);
+  session.history=session.history.slice(-100);session.cursor=session.history.length;
+  appendTerminal(session,`${terminalPrompt(context)} ${command}`);
+  const local=command.trim().toLowerCase();
+  if(local==='clear'){session.entries=[];updateTerminal(context,true);return;}
+  if(local==='help') {
+    appendTerminal(session,'PING · INFO · GET "my key" · SET "my key" "hello world" · SCAN 0 COUNT 100 · SELECT 2\nUse quotes for spaces and empty values. Each command uses an isolated connection.\nTransactions, subscriptions, and MONITOR need a persistent client and are unavailable here.');
+    updateTerminal(context,true);return;
+  }
+  session.busy=true;updateTerminal(context);
+  try {
+    const response=await apiFetch(`/api/terminal/${encodeURIComponent(node.name)}/${service}`,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':document.querySelector('meta[name="csrf-token"]').content},body:JSON.stringify({command,database:session.database})});
+    const result=await response.json();
+    if(!response.ok)throw Error(result.error||'Command failed.');
+    if(result.ok)session.database=result.database;
+    appendTerminal(session,result.output||'(empty response)');
+  } catch(error) {
+    appendTerminal(session,`(error) ${error instanceof TypeError?'Connection lost; the command may have executed. Check Redis before retrying.':error.message}`);
+  } finally {session.busy=false;updateTerminal(context,true);}
+}
+function bindTerminal() {
+  if(!$('redisTerminal'))return;
+  updateTerminal();
+  $('terminalForm').addEventListener('submit',event=>{event.preventDefault();executeTerminal($('terminalInput').value);});
+  $('terminalDatabaseForm').addEventListener('submit',event=>{event.preventDefault();if($('terminalDatabase').checkValidity())executeTerminal(`SELECT ${$('terminalDatabase').value}`);});
+  $('terminalService').addEventListener('change',event=>{terminalServices.set(terminalContext().nodeKey,event.target.value);renderInspector(true);});
+  $('terminalInput').addEventListener('input',event=>{terminalContext().session.draft=event.target.value;});
+  $('terminalInput').addEventListener('keydown',event=>{
+    const {session}=terminalContext();
+    if(event.ctrlKey&&event.key.toLowerCase()==='l'){event.preventDefault();session.entries=[];updateTerminal();}
+    if(event.ctrlKey&&event.key.toLowerCase()==='c'){event.preventDefault();session.draft='';updateTerminal();}
+    if(event.key==='ArrowUp'||event.key==='ArrowDown') {
+      event.preventDefault();
+      if(session.cursor===session.history.length)session.savedDraft=$('terminalInput').value;
+      session.cursor=Math.max(0,Math.min(session.history.length,session.cursor+(event.key==='ArrowUp'?-1:1)));
+      session.draft=session.history[session.cursor]??session.savedDraft;
+      $('terminalInput').value=session.draft;
+    }
+  });
+}
+
+function renderInspector(force=false) {
   if(!$('inspector'))return;
-  if(selectedTab==='configuration'&&!canConfigure||selectedTab==='storage'&&!canSeeDetails)selectedTab='overview';
+  if(selectedTab==='configuration'&&!canConfigure||selectedTab==='storage'&&!canSeeDetails||selectedTab==='terminal'&&!canUseTerminal)selectedTab='overview';
   const focusedTab = document.activeElement?.dataset.tab;
   const searchFocused = document.activeElement?.id === 'configSearch';
   const searchPosition = searchFocused ? document.activeElement.selectionStart : null;
@@ -345,6 +433,8 @@ function renderInspector() {
     return;
   }
   const r=node.redis, hw=node.hardware, sentinel=node.sentinel, c=node.container;
+  // Polling must preserve the live input, caret, output scroll, and pending command.
+  if(!force&&selectedTab==='terminal'&&$('redisTerminal')&&$('inspector').dataset.node===selected&&$('inspector').dataset.cluster===state.cluster)return;
   const inspectorEndpoint=selectedTab==='sentinel'?`${node.metadata.sentinel_address||node.metadata.address}:${node.metadata.sentinel_port}`:endpoint(node);
   let content='';
   const reason = !node.metadata.redis_member ? !sentinel.up?'Sentinel is unavailable':sentinel.quorum_ok?'Sentinel online · quorum available':'Sentinel online · no quorum' : node.stale ? `Server unreachable · last seen ${age(node.last_seen)}` : !r.up ? r.error==='authentication_failed'?'Redis authentication failed':r.error==='timeout'?'Redis query timed out':'Redis is unavailable' : r.role==='master'?'Current master · accepting writes':`${syncView(node).title} · ${syncView(node).description}`;
@@ -357,12 +447,16 @@ function renderInspector() {
     content=sentinelDetails(node);
   } else if (selectedTab==='configuration') {
     content=configurationDetails(node);
+  } else if (selectedTab==='terminal') {
+    content=terminalDetails(node);
   } else {
     content=(node.stale?`<div class="inspector-status error">${icon('info')}Last observation · ${age(node.last_seen)}</div>`:'')+(node.storage.length?node.storage.map(item=>`<div class="storage-item"><div class="storage-name">${esc(item.label)}<span class="mount-state ${item.mounted?'':'bad'}">${item.mounted?'MOUNTED':node.stale?'NOT OBSERVED':'NOT MOUNTED'}</span></div>${meter('Space used',item.used,item.total)}<div class="path-label">SERVER PATH</div><div class="path-value">${esc(item.host_path)}</div>${node.metadata.deployment==='host'?'':`<div class="path-label">INSIDE CONTAINER</div><div class="path-value">${esc(item.container_path)}</div>`}${item.available!=null?`<div class="storage-source">${bytes(item.available)} available · ${esc(item.filesystem||'unknown filesystem')}</div>`:''}${item.source?`<div class="storage-source mono">${esc(item.source)}</div>`:''}</div>`).join(''):'<p class="muted-text">No storage information available yet.</p>')+`<div class="storage-item"><div class="storage-name">Runtime paths</div><div class="path-label">REDIS LOG FILE</div><div class="path-value">${esc(r.logfile||'Not observed')}</div><div class="path-label">REDIS CONFIGURATION</div><div class="path-value">${esc(r.config_file||'Not observed')}</div></div>`;
   }
-  $('inspector').innerHTML=`<div class="inspector-head"><div class="section-eyebrow">INSTANCE INSPECTOR</div><div class="inspector-title"><h2>${selectedTab==='sentinel'?icon('shield'):role(node)==='master'?icon('crown'):''}${esc(node.name)}</h2>${selectedTab==='sentinel'?'<span class="role-badge sentinel">Sentinel</span>':badge(node)}</div><div class="inspector-endpoint"><span>${esc(inspectorEndpoint)}</span><button class="copy-button" data-copy="${esc(inspectorEndpoint)}" title="Copy endpoint" aria-label="Copy endpoint">${icon('copy')}</button></div></div><div class="inspector-tabs"><button data-tab="overview" class="${selectedTab==='overview'?'active':''}" aria-pressed="${selectedTab==='overview'}">Overview</button>${node.metadata.redis_member&&canConfigure?`<button data-tab="configuration" class="${selectedTab==='configuration'?'active':''}" aria-pressed="${selectedTab==='configuration'}">Configuration</button>`:''}${node.metadata.sentinel_member?`<button data-tab="sentinel" class="${selectedTab==='sentinel'?'active':''}" aria-pressed="${selectedTab==='sentinel'}">Sentinel</button>`:''}${canSeeDetails?`<button data-tab="storage" class="${selectedTab==='storage'?'active':''}" aria-pressed="${selectedTab==='storage'}">Storage & paths</button>`:''}</div><div class="inspector-content ${selectedTab==='storage'?'storage-content':selectedTab==='configuration'?'configuration-content':''}">${content}</div>`;
+  $('inspector').innerHTML=`<div class="inspector-head"><div class="section-eyebrow">INSTANCE INSPECTOR</div><div class="inspector-title"><h2>${selectedTab==='sentinel'?icon('shield'):role(node)==='master'?icon('crown'):''}${esc(node.name)}</h2>${selectedTab==='sentinel'?'<span class="role-badge sentinel">Sentinel</span>':badge(node)}</div><div class="inspector-endpoint"><span>${esc(inspectorEndpoint)}</span><button class="copy-button" data-copy="${esc(inspectorEndpoint)}" title="Copy endpoint" aria-label="Copy endpoint">${icon('copy')}</button></div></div><div class="inspector-tabs"><button data-tab="overview" class="${selectedTab==='overview'?'active':''}" aria-pressed="${selectedTab==='overview'}">Overview</button>${node.metadata.redis_member&&canConfigure?`<button data-tab="configuration" class="${selectedTab==='configuration'?'active':''}" aria-pressed="${selectedTab==='configuration'}">Configuration</button>`:''}${node.metadata.sentinel_member?`<button data-tab="sentinel" class="${selectedTab==='sentinel'?'active':''}" aria-pressed="${selectedTab==='sentinel'}">Sentinel</button>`:''}${canUseTerminal?`<button data-tab="terminal" class="${selectedTab==='terminal'?'active':''}" aria-pressed="${selectedTab==='terminal'}">Terminal</button>`:''}${canSeeDetails?`<button data-tab="storage" class="${selectedTab==='storage'?'active':''}" aria-pressed="${selectedTab==='storage'}">Storage & paths</button>`:''}</div><div class="inspector-content ${selectedTab==='terminal'?'terminal-content':selectedTab==='storage'?'storage-content':selectedTab==='configuration'?'configuration-content':''}">${content}</div>`;
   renderConfigurationRows();
   $('inspector').dataset.node = selected;
+  $('inspector').dataset.cluster = state.cluster;
+  bindTerminal();
   if ($('configRows')) $('configRows').scrollTop = configScroll;
   if (focusedTab) [...$('inspector').querySelectorAll('[data-tab]')].find(tab=>tab.dataset.tab===focusedTab)?.focus({preventScroll:true});
   if (searchFocused && $('configSearch')) {
@@ -551,12 +645,13 @@ document.addEventListener('click',async event=>{
     return;
   }
   const node=event.target.closest('[data-node]');
-  if (node) {selected=node.dataset.node;configFilter='';selectedTab=node.dataset.inspectTab || (canConfigure&&state.nodes.find(n=>n.name===selected)?.metadata.redis_member?'configuration':'overview');renderGraph();renderSentinels();renderFleet();renderInspector();syncLogControls();
+  if (node&&node!==$('inspector')) {selected=node.dataset.node;configFilter='';selectedTab=node.dataset.inspectTab || (canConfigure&&state.nodes.find(n=>n.name===selected)?.metadata.redis_member?'configuration':'overview');renderGraph();renderSentinels();renderFleet();renderInspector();syncLogControls();
     if(typeof syncWorkspaceLocation==='function'&&!sharedView)syncWorkspaceLocation(activeCluster,selected);
     if (window.matchMedia('(max-width: 1000px)').matches) $('inspector')?.scrollIntoView({behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});
   }
   const tab=event.target.closest('[data-tab]');
   if (tab) {selectedTab=tab.dataset.tab;renderInspector();}
+  if(event.target.closest('[data-terminal-clear]')){terminalContext().session.entries=[];updateTerminal();}
   const service=event.target.closest('[data-log-service]');
   if (service) {logService=service.dataset.logService;syncLogControls();}
   const copy=event.target.closest('[data-copy]');

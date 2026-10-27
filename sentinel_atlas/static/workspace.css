@@ -1,4 +1,23 @@
 /* Shared navigation and forms for the server-rendered workspace. */
+.multipage .inspector-tabs { flex-wrap: wrap; }
+.multipage .inspector-content.terminal-content { display: block; padding: 12px; }
+.redis-terminal { min-width: 0; overflow: hidden; border: 1px solid #263b53; border-radius: 10px; background: #0c1424; color: #d4e4f3; font: 12px/1.65 "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+.terminal-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; background: #17253a; border-bottom: 1px solid #263b53; }
+.terminal-label { display: flex; align-items: center; gap: 7px; font-size: 10px; color: #a8c4dd; }
+.terminal-label svg { width: 15px; height: 15px; }
+.redis-terminal button, .redis-terminal select, .redis-terminal input { font: inherit; color: inherit; }
+.redis-terminal button { background: #223b51; border: 1px solid #375673; border-radius: 5px; padding: 3px 7px; }
+.redis-terminal button:hover { background: #2d4f6d; }
+.redis-terminal button:disabled { opacity: .45; cursor: default; }
+.terminal-controls { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 12px; font-size: 10px; }
+.terminal-controls label, #terminalDatabaseForm { display: flex; align-items: center; gap: 6px; }
+.terminal-controls select, .terminal-controls input { min-width: 0; border: 1px solid #375673; background: #17253a; border-radius: 4px; padding: 3px; }
+.terminal-controls input { width: 62px; }
+.terminal-output { min-height: 230px; max-height: 460px; overflow: auto; overscroll-behavior: contain; margin: 0; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; color: #c7e9dc; }
+.terminal-input-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; border-top: 1px solid #263b53; padding: 10px 12px; }
+.terminal-input-row label { flex-basis: 100%; overflow-wrap: anywhere; color: #6fdbb5; font-size: 11px; }
+.terminal-input-row input { width: 0; min-width: 60px; flex: 1; background: transparent; border: none; padding: 5px 0; outline-color: #6fdbb5; }
+.terminal-help { font: 10px/1.7 system-ui, sans-serif; color: #9db3ca; padding: 0 12px 12px; margin: 0; }
 .multipage .sidebar { width: 210px; padding: 24px 14px 18px; align-items: stretch; overflow-y: auto; }
 .multipage .app-shell { margin-left: 210px; }
 .workspace-brand { display: flex; align-items: center; gap: 9px; text-decoration: none; color: #e2edf9; font-size: 17px; letter-spacing: -.5px; }
