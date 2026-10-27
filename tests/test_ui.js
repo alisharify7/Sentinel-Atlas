@@ -47,6 +47,7 @@ document.body.dataset.terminal='true';
 for (const id of ['inspector','terminalDialog','graphContainer','graphEmpty','graphNodes','graphLines','topologyStats','sentinelNetwork','fleetBody','graphToolbar','graphViewport','graphStage','graphScene','graphZoom','graphZoomIn','graphZoomOut','graphFit','graphReset','graphLock','graphHint','graphFullscreen','graphExport','graphExportStatus']) elements.set(id,element(id));
 let mobile=false;
 const context=vm.createContext({document,Intl,console,setTimeout,Blob,TextEncoder,window:{matchMedia:()=>({matches:mobile}),getSelection:()=>({toString:()=>''})}});
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../sentinel_atlas/static/page-refresh.js'),'utf8'),context);
 vm.runInContext(fs.readFileSync(path.join(__dirname,'../sentinel_atlas/static/graph-export.js'),'utf8'),context);
 const source=fs.readFileSync(path.join(__dirname,'../sentinel_atlas/static/app.js'),'utf8');
 const clickStart=source.indexOf("document.addEventListener('click'");

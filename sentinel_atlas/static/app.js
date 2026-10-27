@@ -37,9 +37,22 @@ function meter(label, value, total) {
   return `<div class="metric-label"><span>${esc(label)}</span><strong>${bytes(value)} / ${bytes(total)}</strong></div><div class="meter"><span class="${p>90?'danger':p>75?'warn':''}" style="width:${p}%"></span></div>`;
 }
 let state = null, selected = initialQuery?.get('node')||null, selectedTab = 'overview', configFilter = '', scenario = 'healthy', activeCluster=initialQuery?.get('cluster')||'', lastRender = null, serverConnected = false, accessLost=false;
+const pageRefresh=new PageRefresh({page:pageContext.page||'overview',scope:pageContext.layoutKey||'workspace',control:$('refreshInterval'),
+  onRefresh:async()=>{if(accessLost)return;await fetchSnapshot();if($('logNode'))await fetchLogs();},
+  onIntervalChange:()=>{updateRefreshSummary();updateTime();if(logPayload)renderLogs();}
+});
+
+function updateRefreshSummary() {
+  const control=$('refreshInterval'),hint=$('refreshHint');
+  if(!control)return;
+  control.title=`Check this page for updates every ${pageRefresh.seconds}s. Saved separately for this page in this browser.`;
+  if(hint)hint.textContent=state?.mode==='demo'?'Demo data':state?.poll_interval?`Data sampled every ${state.poll_interval}s`:'Saved for this page';
+  if(state?.mode!=='demo'&&state?.poll_interval)control.title+=` New measurements are collected every ${state.poll_interval}s.`;
+}
 
 function reloadSharedView() {
   accessLost=true;
+  pageRefresh.stop();
   $('mainContent')?.replaceChildren();
   location.reload();
 }
@@ -57,6 +70,7 @@ async function apiFetch(url, options) {
 
 function render(data) {
   state = data;
+  updateRefreshSummary();
   activeCluster=data.cluster;
   const clusterSelect=$('clusterSelect'), clusters=data.clusters || [data.cluster];
   if(clusterSelect) {
@@ -81,7 +95,7 @@ function render(data) {
   $('masterFoot').textContent = master ? endpoint(master) : 'No single master observed';
   }
   if($('clusterName')) $('clusterName').textContent = data.cluster;
-  if($('pollStatus')) $('pollStatus').textContent = `Every ${data.poll_interval}s · ${data.poll_duration}s collection`;
+  if($('pollStatus')) $('pollStatus').textContent = `Collected every ${data.poll_interval}s · ${data.poll_duration}s collection`;
   if (!data.nodes.some(n => n.name===selected)) selected = data.master || data.nodes[0]?.name;
   if(typeof syncWorkspaceLocation==='function'&&!sharedView)syncWorkspaceLocation(activeCluster,selected);
   const notice = data.error || (data.mode==='demo' ? 'Demo workspace · These are sample instances. No VMs are contacted.' : data.status==='offline' && data.nodes.length ? 'No Redis instances are reachable. Check that the VMs and containers are running; this view updates automatically.' : data.master_count>1 ? 'More than one Redis instance reports itself as master. Inspect the replication topology.' : '');
@@ -574,7 +588,7 @@ function renderAttention() {
 
 function updateTime() {
   if (!state||accessLost) return;
-  const stale=state.updated_at && Date.now()/1000-state.updated_at>Math.max(20,state.poll_interval*3+state.poll_duration);
+  const stale=state.updated_at && Date.now()/1000-state.updated_at>Math.max(20,state.poll_interval*3+state.poll_duration,pageRefresh.seconds*2);
   $('lastUpdated').textContent=`Last observation ${age(state.updated_at)}`;
   const pill=$('connectionPill'),bad=!serverConnected||stale||!!state.error;
   pill.classList.toggle('disconnected',bad);
@@ -587,8 +601,9 @@ async function fetchSnapshot() {
   if (fetching||accessLost) return;
   fetching=true;
   const requestedCluster=activeCluster,requestedScenario=scenario;
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
   try {
-    const response=await apiFetch(`/api/cluster?scenario=${encodeURIComponent(scenario)}&cluster=${encodeURIComponent(activeCluster)}`,{cache:'no-store'});
+    const response=await apiFetch(`/api/cluster?scenario=${encodeURIComponent(scenario)}&cluster=${encodeURIComponent(activeCluster)}`,{cache:'no-store',signal:controller.signal});
     if (!response.ok) throw Error('request failed');
     const data=await response.json();
     if(sharedView&&data.share_revision!==pageContext.shareRevision) {reloadSharedView();return;}
@@ -601,7 +616,7 @@ async function fetchSnapshot() {
     $('notice').hidden=false;
     $('notice').textContent='Dashboard connection lost. Showing the last observation; retrying automatically.';
     updateTime();
-  } finally {fetching=false;if(requestedScenario!==scenario||(requestedCluster!==activeCluster&&state?.cluster!==activeCluster))fetchSnapshot();}
+  } finally {clearTimeout(timer);fetching=false;if(requestedScenario!==scenario||(requestedCluster!==activeCluster&&state?.cluster!==activeCluster))fetchSnapshot();}
 }
 
 function moveGraphNode(name,x,y) {
@@ -748,7 +763,7 @@ document.addEventListener('keydown',event=>{if((event.key==='Enter'||event.key==
 bindGraphInteractions();
 $('refreshButton').addEventListener('click',async()=>{
   const button=$('refreshButton');button.disabled=true;
-  try {if(!sharedView){const response=await apiFetch('/api/refresh',{method:'POST',headers:{'X-CSRF-Token':document.querySelector('meta[name="csrf-token"]').content}});if(!response.ok)throw Error('Refresh failed');}await fetchSnapshot();} catch {if(!accessLost){serverConnected=false;updateTime();}} finally {setTimeout(()=>{button.disabled=false;},800);}
+  try {if(!sharedView){const response=await apiFetch('/api/refresh',{method:'POST',headers:{'X-CSRF-Token':document.querySelector('meta[name="csrf-token"]').content}});if(!response.ok)throw Error('Refresh failed');}await pageRefresh.refresh();} catch {if(!accessLost){serverConnected=false;updateTime();}} finally {setTimeout(()=>{button.disabled=false;},800);}
 });
 $('demoScenario')?.addEventListener('change',event=>{scenario=event.target.value;lastRender=null;fetchSnapshot();});
 $('clusterSelect')?.addEventListener('change',event=>{activeCluster=event.target.value;selected=null;lastRender=null;fetchSnapshot();});
@@ -757,11 +772,12 @@ $('fleetRole')?.addEventListener('change',()=>{if(state)renderFleet();});
 $('eventFilter')?.addEventListener('change',()=>{if(state)renderEvents();});
 let resizeTimer;
 if($('graphContainer'))new ResizeObserver(()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(renderGraph,80);}).observe($('graphContainer'));
-setInterval(fetchSnapshot,2000);
+pageRefresh.start();
+updateRefreshSummary();
 setInterval(()=>{updateTime();if(state)renderEvents();},1000);
 fetchSnapshot();
 
-let logService='redis', logPaused=false, logFollowing=true, logPayload=null, logContext='', logRequest=0, logRendering='';
+let logService='redis', logPaused=false, logFollowing=true, logPayload=null, logContext='', logRequest=0, logRendering='',logController=null,logFetchingKey='',logInFlight=null;
 function syncLogControls() {
   if (!state||!$('logNode')) return;
   const dropdown=$('logNode');
@@ -809,23 +825,30 @@ function downloadLogs() {
     status.classList.add('error');status.textContent=error.message||'Download failed. Please try again.';
   }
 }
-async function fetchLogs(force=false) {
+function fetchLogs(force=false) {
   if (!selected || !$('logNode') || accessLost || (logPaused&&!force)) return;
+  const key=JSON.stringify([selected,logService,activeCluster,scenario]);
+  if(logFetchingKey===key)return logInFlight;
   const name=selected, service=logService, cluster=activeCluster, request=++logRequest;
+  logController?.abort();
   const controller=new AbortController(), timer=setTimeout(()=>controller.abort(),10000);
-  try {
-    const response=await apiFetch(`/api/logs/${encodeURIComponent(name)}/${service}?scenario=${encodeURIComponent(scenario)}`,{cache:'no-store',signal:controller.signal});
-    if (!response.ok) throw Error('Unavailable');
-    const data=await response.json();
-    if (request!==logRequest||name!==selected||cluster!==activeCluster||service!==logService||(logPaused&&!force)) return;
-    logPayload=data;renderLogs();
-  } catch {
-    if(accessLost)return;
-    if (request!==logRequest) return;
-    $('logStatus').textContent='DISCONNECTED';$('logStatus').className='log-live error';
-    $('logUpdated').textContent='Connection lost · retrying automatically';
-    if (!logPayload) $('logOutput').innerHTML='<div class="log-empty">Logs are unavailable. Retrying automatically.</div>';
-  } finally {clearTimeout(timer);}
+  logController=controller;logFetchingKey=key;
+  logInFlight=(async()=>{
+    try {
+      const response=await apiFetch(`/api/logs/${encodeURIComponent(name)}/${service}?scenario=${encodeURIComponent(scenario)}`,{cache:'no-store',signal:controller.signal});
+      if (!response.ok) throw Error('Unavailable');
+      const data=await response.json();
+      if (request!==logRequest||name!==selected||cluster!==activeCluster||service!==logService||(logPaused&&!force)) return;
+      logPayload=data;renderLogs();
+    } catch {
+      if(accessLost)return;
+      if (request!==logRequest) return;
+      $('logStatus').textContent='DISCONNECTED';$('logStatus').className='log-live error';
+      $('logUpdated').textContent='Connection lost · retrying automatically';
+      if (!logPayload) $('logOutput').innerHTML='<div class="log-empty">Logs are unavailable. Retrying automatically.</div>';
+    } finally {clearTimeout(timer);if(logController===controller){logController=null;logFetchingKey='';logInFlight=null;}}
+  })();
+  return logInFlight;
 }
 function renderLogs() {
   updateLogDownload();
@@ -834,7 +857,7 @@ function renderLogs() {
   const visible=data.lines.map((text,index)=>({text,index})).filter(line=>line.text.toLowerCase().includes(filter));
   $('logSource').textContent=data.source || `${data.node} / ${data.service}`;
   $('logSource').title=data.source || '';
-  const stale=data.stale||!data.updated_at||Date.now()/1000-data.updated_at>Math.max(20,data.poll_interval*4);
+  const stale=data.stale||!data.updated_at||Date.now()/1000-data.updated_at>Math.max(20,data.poll_interval*4,pageRefresh.seconds*2);
   const status=logPaused?'PAUSED':stale?'STALE':data.status==='ok'?'LIVE':data.status==='pending'?'WAITING':'UNAVAILABLE';
   $('logStatus').textContent=state?.mode==='demo'&&status==='LIVE'?'DEMO':status;
   $('logStatus').className=`log-live ${logPaused?'paused':status==='LIVE'?'':'error'}`;
@@ -878,6 +901,5 @@ $('logFollow')?.addEventListener('click',()=>{
 });
 // Cached reads do not create additional SSH sessions for browser tabs.
 if($('logNode')) {
-  setInterval(fetchLogs,2000);
   setInterval(()=>{if(!logPaused&&logPayload)renderLogs();},1000);
 }

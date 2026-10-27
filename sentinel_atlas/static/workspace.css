@@ -1,4 +1,9 @@
 /* Shared navigation and forms for the server-rendered workspace. */
+.page-refresh-control { display: flex; flex-direction: column; gap: 4px; min-width: 140px; }
+.page-refresh-control label { font-size: 10px; color: #607b99; }
+.page-refresh-control select { min-height: 35px; border: 1px solid #cfdeef; border-radius: 7px; padding: 7px 10px; background: #f8faff; color: #315979; font-size: 11px; }
+.page-refresh-control small { color: #7b90a8; font-size: 9px; }
+.multipage .heading-actions { flex-wrap: wrap; max-width: 100%; }
 .log-download-note { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; padding: 0 24px 14px; color: #758ba5; font-size: 10px; }
 #logDownload { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 #logDownload svg { width: 14px; height: 14px; }

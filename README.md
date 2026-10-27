@@ -57,6 +57,7 @@ for Linux hardware, storage, and live service logs.
 | **Node terminals** | Run live Redis or Sentinel commands as an administrator, switch databases with `SELECT` or the DB control, and recall commands with ↑/↓ |
 | **Cluster activity** | Filter discovery, outages, recoveries, warnings, and master promotions for the selected cluster |
 | **Multiple clusters** | Switch between caches and replication groups; keep the selected cluster and instance as you navigate |
+| **Page refresh** | Choose 1, 5, 10, 15, or 30 seconds independently for each monitoring page; remember the selection in your browser |
 | **Profiles & sessions** | Update your username, password, display name, contact information, team, biography, and timezone; sign out other sessions |
 | **Scoped viewing links** | Share one cluster without requiring a recipient account; choose graph-only access or independently enable configuration, logs, server details, and activity |
 | **Link management** | Edit a link's name, permissions, or expiry without changing its URL; renew expired links, revoke access, or delete links permanently |
@@ -238,6 +239,14 @@ lets you filter by name, address, role, or availability. **Live logs** keeps you
 selected instance in focus, and **Activity** filters discovery, outages, recoveries,
 warnings, and promotions for the selected cluster. Navigation preserves the selected
 cluster and instance.
+
+Use **Auto refresh** beside the Refresh button to choose **1, 5, 10, 15, or 30
+seconds**. Each monitoring page remembers its own interval in your browser, with
+5 seconds as the default. Accounts and shared views keep separate preferences.
+The Logs page uses the same selection for its log updates, and Pause still stops
+new log lines. Manual Refresh remains available. The control shows how often new
+measurements are sampled: page refresh checks the latest cached data, while the
+server collects measurements at `SENTINEL_POLL_INTERVAL` (5 seconds by default).
 
 On **Live logs**, choose an instance and the **Redis** or **Sentinel** tab, then
 click **Download logs**. The UTF-8 `.log` file contains the visible lines, source,
@@ -427,8 +436,10 @@ node --check sentinel_atlas/static/app.js
 node --check sentinel_atlas/static/workspace.js
 node --check sentinel_atlas/static/graph-export.js
 node --check sentinel_atlas/static/log-export.js
+node --check sentinel_atlas/static/page-refresh.js
 node tests/test_ui.js
 node tests/test_logs_ui.js
+node tests/test_page_refresh.js
 ```
 
 The suite covers authentication, CSRF, profiles, account persistence, session

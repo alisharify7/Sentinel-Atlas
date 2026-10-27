@@ -289,6 +289,18 @@ identify missing quorum or disagreement; unavailable services are marked in red.
 
 ## Live logs and collection
 
+Monitoring pages have an **Auto refresh** selector for 1, 5, 10, 15, or 30 seconds.
+The default is 5 seconds. The browser stores the choice separately for each page
+and account or shared view; changing one page does not change another. Logs follow
+the selected page interval and retain their separate Pause control. Changing the
+interval immediately checks for updates, replaces the previous timer, and avoids
+overlapping slow requests. Browser storage restrictions do not prevent selecting
+an interval for the current visit.
+
+This setting controls how often the page checks the cached observations. Live
+measurements still follow the server's `SENTINEL_POLL_INTERVAL`; the selector shows
+the sampling interval. It does not change other viewers or start extra SSH probes.
+
 The console includes node/service selection, text filtering, pause/resume, and
 follow-scrolling. Server probes read up to 32 KiB and retain the latest 120 lines,
 limited to 1,000 characters per line. Configured files work even if Redis is down

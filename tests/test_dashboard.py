@@ -91,6 +91,27 @@ class StateTests(unittest.TestCase):
 
 
 class BoundaryTests(unittest.TestCase):
+    def test_page_refresh_choices_are_available_on_monitoring_and_shared_pages(self):
+        client=logged_in_client(DemoMonitor())
+        self.addCleanup(client.application.extensions['accounts'].engine.dispose)
+        for page in ('/','/live','/instances','/logs','/activity'):
+            html=client.get(page).text
+            self.assertIn('id="refreshInterval"',html)
+            self.assertIn('/static/page-refresh.js',html)
+            for value in (1,5,10,15,30):
+                self.assertIn(f'<option value="{value}"'+(' selected' if value==5 else '')+'>Every ',html)
+        for page in ('/about','/account','/shares'):
+            self.assertNotIn('id="refreshInterval"',client.get(page).text)
+        with client.session_transaction() as session:
+            csrf=session['csrf']
+        client.post('/shares',data={'csrf_token':csrf,'label':'Refresh demo','cluster':'redis-main','duration':'3600'})
+        with client.session_transaction() as session:
+            token=session['new_share']['token']
+        anonymous=client.application.test_client()
+        html=anonymous.get(f'/s/{token}').text
+        self.assertIn('id="refreshInterval"',html)
+        self.assertIn('data-layout-key="share-',html)
+
     def test_log_download_controls_and_script_only_load_on_logs_page(self):
         client=logged_in_client(DemoMonitor())
         self.addCleanup(client.application.extensions['accounts'].engine.dispose)
@@ -230,7 +251,7 @@ class BoundaryTests(unittest.TestCase):
     def test_api_and_assets_work_without_external_project(self):
         client=logged_in_client(DemoMonitor())
         self.addCleanup(client.application.extensions['accounts'].engine.dispose)
-        for path in ('/','/static/app.css','/static/app.js','/static/graph-export.js','/static/log-export.js','/static/workspace.js','/static/workspace.css','/static/observatory.css','/api/cluster'):
+        for path in ('/','/static/app.css','/static/app.js','/static/graph-export.js','/static/log-export.js','/static/page-refresh.js','/static/workspace.js','/static/workspace.css','/static/observatory.css','/api/cluster'):
             with self.subTest(path=path):
                 response=client.get(path)
                 self.assertEqual(response.status_code,200)

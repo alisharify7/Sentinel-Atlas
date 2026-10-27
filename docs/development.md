@@ -77,8 +77,10 @@ node --check sentinel_atlas/static/app.js
 node --check sentinel_atlas/static/workspace.js
 node --check sentinel_atlas/static/graph-export.js
 node --check sentinel_atlas/static/log-export.js
+node --check sentinel_atlas/static/page-refresh.js
 node tests/test_ui.js
 node tests/test_logs_ui.js
+node tests/test_page_refresh.js
 # Optional Docker-backed service checks:
 python tests/integration.py
 # Build and verify the packaged runtime container:

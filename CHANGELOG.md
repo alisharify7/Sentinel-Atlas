@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added per-page auto refresh at 1, 5, 10, 15, or 30 seconds, with browser-saved
+  preferences and shared log polling that avoids overlapping requests.
 - Added Redis and Sentinel log downloads with UTF-8 files, the current filter and
   paused observation, safe filenames, source/timestamp headers, and stale labels.
 - Improved terminals with fullscreen, text zoom controls and shortcuts, a clearer

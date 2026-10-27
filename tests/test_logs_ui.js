@@ -35,7 +35,7 @@ const context=vm.createContext({document,Blob,AbortController,console,
   renderGraph(){},renderSentinels(){},renderFleet(){},renderInspector(){},age:()=> 'just now'
 });
 const run=code=>vm.runInContext(code,context);
-run("const $=id=>document.getElementById(id);let state={mode:'demo',nodes:[{name:'cache-one',metadata:{redis_port:6379,sentinel_port:26379}}]},selected='cache-one',activeCluster='main',scenario='healthy',accessLost=false;");
+run("const $=id=>document.getElementById(id),pageRefresh={seconds:5};let state={mode:'demo',nodes:[{name:'cache-one',metadata:{redis_port:6379,sentinel_port:26379}}]},selected='cache-one',activeCluster='main',scenario='healthy',accessLost=false;");
 vm.runInContext(fs.readFileSync(path.join(__dirname,'../sentinel_atlas/static/log-export.js'),'utf8'),context);
 const source=fs.readFileSync(path.join(__dirname,'../sentinel_atlas/static/app.js'),'utf8');
 vm.runInContext(source.slice(source.indexOf("let logService='redis'")),context);
@@ -96,6 +96,24 @@ vm.runInContext(source.slice(source.indexOf("let logService='redis'")),context);
   run("logPayload={...logPayload,stale:true};renderLogs();");
   elements.get('logDownload').dispatch('click');
   assert.match(await blobs.at(-1).text(),/stale observation/,'Stale collected data can be downloaded with an explicit label');
+  // A one-second page interval must not pile up slow log requests. Changing
+  // service aborts the old request and late replies cannot replace the new view.
+  let finishRedis,finishSentinel;
+  const signals=[];
+  context.apiFetch=(url,options)=>new Promise(resolve=>{
+    signals.push(options.signal);
+    if(url.includes('/redis?'))finishRedis=resolve;else finishSentinel=resolve;
+  });
+  run("logService='redis';logPaused=false;");
+  const slowRedis=run('fetchLogs(true)'),sameRedis=run('fetchLogs(true)');
+  assert.equal(slowRedis,sameRedis,'Overlapping requests for the same log share one promise');
+  assert.equal(signals.length,1);
+  run("logService='sentinel';");
+  const slowSentinel=run('fetchLogs(true)');
+  assert.equal(signals[0].aborted,true,'Switching service aborts the previous request');
+  finishRedis({ok:true,json:async()=>({...fixtures.redis})});await slowRedis;
+  finishSentinel({ok:true,json:async()=>({...fixtures.sentinel})});await slowSentinel;
+  assert.equal(run('logPayload.service'),'sentinel');
   run("logPayload={...logPayload,node:'other-node'};updateLogDownload();downloadLogs();");
   assert.equal(elements.get('logDownload').disabled,true);
   assert.match(elements.get('logDownloadStatus').textContent,/selected instance and service/);
