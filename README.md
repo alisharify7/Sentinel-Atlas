@@ -83,6 +83,15 @@ to clear output. Reloading the page clears this browser memory.
 Direct connections reuse configured authentication and TLS settings;
 SSH probes execute through the existing inventory and `redis-cli` installation.
 
+Click **Fullscreen** (or press **Alt+Enter** inside the terminal) for a dedicated
+command workspace. **Escape** or **Exit fullscreen** returns to the inspector;
+your database, history, draft, and running command are preserved. Use **−** / **+**
+to change terminal text size, or click the percentage to reset it. While the terminal
+is focused, **Ctrl/⌘ +**, **Ctrl/⌘ −**, and **Ctrl/⌘ 0** provide the same controls.
+You can type your next command while one is executing; press Enter after it finishes
+to run the draft. The fullscreen workspace fills the browser window and keeps
+keyboard focus inside the terminal until you exit.
+
 Each command uses a separate connection with a short execution timeout. Transactions,
 subscriptions, `MONITOR`, and connection mode changes need a persistent Redis client
 and are unavailable in this terminal. A timeout can leave a command's outcome
@@ -101,6 +110,11 @@ information are sample values; no live infrastructure or bearer URLs are shown.
 <details open>
 <summary><strong>Node terminal — commands, database switching, and simulated demo replies</strong></summary>
 <p align="center"><img src="docs/assets/demo-terminal.png" alt="Instances page with the master node selected and an interactive demo terminal showing PING, SELECT 2, and GET demo:environment returning staging, alongside Redis service and database controls." width="100%"></p>
+</details>
+
+<details>
+<summary><strong>Fullscreen terminal — more room to work, with text zoom and keyboard controls</strong></summary>
+<p align="center"><img src="docs/assets/demo-terminal-fullscreen.png" alt="Fullscreen Redis terminal showing demo command replies in database 2, a focused command input, text zoom at 114 percent, and an Exit fullscreen control." width="100%"></p>
 </details>
 
 <details>

@@ -1,23 +1,65 @@
 /* Shared navigation and forms for the server-rendered workspace. */
 .multipage .inspector-tabs { flex-wrap: wrap; }
 .multipage .inspector-content.terminal-content { display: block; padding: 12px; }
-.redis-terminal { min-width: 0; overflow: hidden; border: 1px solid #263b53; border-radius: 10px; background: #0c1424; color: #d4e4f3; font: 12px/1.65 "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
-.terminal-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; background: #17253a; border-bottom: 1px solid #263b53; }
-.terminal-label { display: flex; align-items: center; gap: 7px; font-size: 10px; color: #a8c4dd; }
-.terminal-label svg { width: 15px; height: 15px; }
+.redis-terminal { --terminal-font-size: 14px; display: flex; flex-direction: column; min-width: 0; overflow: hidden; border: 1px solid #2d455f; border-radius: 12px; background: #0b1322; color: #d4e4f3; font: var(--terminal-font-size)/1.8 "SFMono-Regular", Consolas, "Liberation Mono", monospace; box-shadow: 0 12px 32px #09152618; }
+.terminal-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 14px; background: linear-gradient(110deg, #192c42, #132236); border-bottom: 1px solid #293e56; }
+.terminal-heading { min-width: 0; }
+.terminal-heading strong { display: block; overflow-wrap: anywhere; margin-top: 4px; font: 600 13px/1.5 system-ui, sans-serif; color: #e0edf9; }
+.terminal-heading strong span { color: #93adc7; font-weight: 400; }
+.terminal-label { display: flex; align-items: center; gap: 6px; font: 9px/1.6 system-ui, sans-serif; letter-spacing: .7px; color: #88dabb; }
+.terminal-label svg { width: 14px; height: 14px; }
 .redis-terminal button, .redis-terminal select, .redis-terminal input { font: inherit; color: inherit; }
-.redis-terminal button { background: #223b51; border: 1px solid #375673; border-radius: 5px; padding: 3px 7px; }
-.redis-terminal button:hover { background: #2d4f6d; }
-.redis-terminal button:disabled { opacity: .45; cursor: default; }
-.terminal-controls { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 12px; font-size: 10px; }
-.terminal-controls label, #terminalDatabaseForm { display: flex; align-items: center; gap: 6px; }
-.terminal-controls select, .terminal-controls input { min-width: 0; border: 1px solid #375673; background: #17253a; border-radius: 4px; padding: 3px; }
-.terminal-controls input { width: 62px; }
-.terminal-output { min-height: 230px; max-height: 460px; overflow: auto; overscroll-behavior: contain; margin: 0; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; color: #c7e9dc; }
-.terminal-input-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; border-top: 1px solid #263b53; padding: 10px 12px; }
-.terminal-input-row label { flex-basis: 100%; overflow-wrap: anywhere; color: #6fdbb5; font-size: 11px; }
-.terminal-input-row input { width: 0; min-width: 60px; flex: 1; background: transparent; border: none; padding: 5px 0; outline-color: #6fdbb5; }
-.terminal-help { font: 10px/1.7 system-ui, sans-serif; color: #9db3ca; padding: 0 12px 12px; margin: 0; }
+.redis-terminal button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; background: #20364d; border: 1px solid #3a5470; border-radius: 6px; padding: 4px 9px; cursor: pointer; }
+.redis-terminal button:hover { background: #2b4b66; border-color: #6d9bb9; }
+.redis-terminal button:disabled { opacity: .4; cursor: default; }
+.redis-terminal button:focus-visible, .redis-terminal input:focus-visible, .redis-terminal select:focus-visible, .terminal-output:focus-visible { outline: 2px solid #7fdfbf; outline-offset: 3px; }
+.terminal-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font: 11px/1.5 system-ui, sans-serif; }
+.terminal-actions svg { width: 15px; height: 15px; }
+.terminal-zoom { display: inline-flex; overflow: hidden; border: 1px solid #3a5470; border-radius: 6px; }
+.terminal-zoom button { border: 0; border-radius: 0; min-width: 30px; padding: 4px 7px; }
+.terminal-zoom button + button { border-left: 1px solid #3a5470; }
+#terminalZoomReset { min-width: 48px; font-variant-numeric: tabular-nums; }
+.terminal-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid #1c3047; background: #0f1c2d; font: 11px/1.5 system-ui, sans-serif; }
+.terminal-controls label, #terminalDatabaseForm { display: flex; align-items: center; gap: 7px; }
+.terminal-controls label { color: #a9bfd4; }
+.terminal-controls select, .terminal-controls input { min-width: 0; min-height: 30px; border: 1px solid #375673; background: #17283d; border-radius: 5px; padding: 4px 7px; color: #e0edf9; }
+.terminal-controls input { width: 72px; }
+.terminal-output { flex: 1; min-height: 250px; max-height: 440px; overflow: auto; overscroll-behavior: contain; scrollbar-color: #36516d #0b1322; margin: 0; padding: 18px 14px; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; color: #c7e6df; tab-size: 4; cursor: text; }
+.terminal-output::selection { background: #296451; color: white; }
+.terminal-input-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; border-top: 1px solid #293e56; padding: 12px 14px; background: #101f30; }
+.terminal-input-row:focus-within { box-shadow: inset 3px 0 #72dcb6; }
+.terminal-input-row label { flex-basis: 100%; overflow-wrap: anywhere; color: #7ee2bf; font-size: inherit; }
+.terminal-input-row input { width: 0; min-width: 60px; flex: 1; background: transparent; border: none; border-radius: 3px; padding: 6px 4px; caret-color: #7ee2bf; }
+.terminal-input-row button { font: 12px/1.5 system-ui, sans-serif; background: #1d594b; border-color: #3c8c75; padding: 6px 14px; }
+.terminal-statusbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 9px 14px; font: 10px/1.6 system-ui, sans-serif; color: #849fb9; }
+#terminalStatus { color: #8dddbf; }
+.terminal-statusbar .terminal-clear { margin-left: auto; min-height: 24px; padding: 2px 6px; background: transparent; border-color: transparent; font: inherit; color: #adc6df; }
+.terminal-statusbar > span:last-child { flex-basis: 100%; }
+.terminal-help { font: 10px/1.7 system-ui, sans-serif; color: #90a9c2; padding: 0 14px 12px; margin: 0; }
+.terminal-dialog { position: fixed; inset: 0; z-index: 10000; width: 100vw; max-width: none; height: 100vh; height: 100dvh; max-height: none; padding: 0; margin: 0; border: 0; border-radius: 0; background: #0b1322; color: #d4e4f3; }
+.terminal-dialog[hidden] { display: none; }
+body.terminal-fullscreen-open { overflow: hidden; }
+.multipage .inspector.terminal-expanded { position: relative; top: 0; display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0; margin: 0; padding: 0; border: 0; border-radius: 0; background: #0b1322; box-shadow: none; }
+.terminal-expanded > .inspector-head, .terminal-expanded > .inspector-tabs { display: none; }
+.multipage .terminal-expanded > .inspector-content.terminal-content { display: flex; flex: 1; min-height: 0; padding: 0; }
+.terminal-expanded .redis-terminal { flex: 1; height: 100%; min-height: 0; border: 0; border-radius: 0; box-shadow: none; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+.terminal-expanded .terminal-toolbar { padding: 16px 24px; }
+.terminal-expanded .terminal-heading strong { font-size: 16px; }
+.terminal-expanded .terminal-controls, .terminal-expanded .terminal-statusbar { padding-left: 24px; padding-right: 24px; }
+.terminal-expanded .terminal-output { min-height: 0; max-height: none; padding: 22px 24px; }
+.terminal-expanded .terminal-input-row { padding: 14px 24px; }
+.terminal-expanded .terminal-input-row label { flex-basis: auto; }
+.terminal-expanded .terminal-input-row input { min-width: 120px; }
+.terminal-expanded .terminal-help { padding-left: 24px; padding-right: 24px; }
+.terminal-expanded .terminal-statusbar > span:last-child { flex-basis: auto; }
+@media (max-width: 600px) {
+  .terminal-expanded .terminal-toolbar, .terminal-expanded .terminal-controls, .terminal-expanded .terminal-statusbar, .terminal-expanded .terminal-input-row { padding: 10px 14px; }
+  .terminal-expanded .terminal-output { padding: 16px 14px; }
+  .terminal-expanded .terminal-input-row label { flex-basis: 100%; }
+  .terminal-expanded .terminal-statusbar > span:last-child { display: none; }
+  .terminal-expanded .terminal-help { padding: 0 14px 10px; }
+  .terminal-heading strong { font-size: 12px; }
+}
 .multipage .sidebar { width: 210px; padding: 24px 14px 18px; align-items: stretch; overflow-y: auto; }
 .multipage .app-shell { margin-left: 210px; }
 .workspace-brand { display: flex; align-items: center; gap: 9px; text-decoration: none; color: #e2edf9; font-size: 17px; letter-spacing: -.5px; }

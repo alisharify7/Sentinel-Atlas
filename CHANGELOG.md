@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Improved terminals with fullscreen, text zoom controls and shortcuts, a clearer
+  command prompt and execution status, and support for drafting the next command.
 - Added administrator terminals to each node's inspector, with Redis/Sentinel
   service selection, live command output, command history, and database switching.
 - Supported terminal commands through both direct Redis connections and existing

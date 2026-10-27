@@ -8,12 +8,13 @@ const elements = new Map();
 const listeners = {};
 function element(id) {
   const classes=new Set(), handlers={};
-  return {id, dataset:{}, style:{}, clientWidth:800, clientHeight:800, children:[], scrollTop:0, scrollLeft:0, _html:'', textContent:'',
+  return {id, dataset:{}, style:{setProperty(name,value){this[name]=value;}}, clientWidth:800, clientHeight:800, children:[], scrollTop:0, scrollLeft:0, _html:'', textContent:'',
     classList:{contains:name=>classes.has(name),add:name=>classes.add(name),remove:name=>classes.delete(name),toggle(name,on){if(on??!classes.has(name))classes.add(name);else classes.delete(name);}},
     addEventListener(type,handler) {handlers[type]=handler;},
     dispatch(type,values={}) {const event={button:0,pointerId:1,clientX:0,clientY:0,target:this,preventDefault(){this.prevented=true;},stopPropagation(){this.stopped=true;},...values};handlers[type]?.(event);return event;},
     closest(selector) {return selector==='.node-card'&&this.dataset.node?this:null;},
     getBoundingClientRect() {return {left:0,top:0};},
+    getClientRects() {return [{}];},
     setPointerCapture(id) {this.capture=id;},hasPointerCapture(id) {return this.capture===id;},releasePointerCapture() {this.capture=null;},
     get innerHTML() { return this._html; },
     set innerHTML(value) {
@@ -26,7 +27,7 @@ function element(id) {
         return child;
       });
       if (id==='inspector') {
-        for (const child of ['configRows','configCount','configSearch','redisTerminal','terminalForm','terminalInput','terminalPrompt','terminalOutput','terminalDatabaseForm','terminalDatabase','terminalService']) elements.delete(child);
+        for (const child of ['configRows','configCount','configSearch','redisTerminal','terminalForm','terminalInput','terminalPrompt','terminalOutput','terminalDatabaseForm','terminalDatabase','terminalService','terminalZoomOut','terminalZoomReset','terminalZoomIn','terminalFullscreen','terminalStatus']) elements.delete(child);
         for (const match of value.matchAll(/id="([^"]+)"/g)) elements.set(match[1],element(match[1]));
       }
     },
@@ -36,14 +37,16 @@ function element(id) {
     removeAttribute(name) { delete this[name]; },
     focus() { document.activeElement=this; },
     setSelectionRange(start,end) { this.selectionStart=start;this.selectionEnd=end; },
-    scrollIntoView() { this.scrolled=true; }
+    scrollIntoView() { this.scrolled=true; },
+    before(anchor) { this.anchor=anchor; },
+    append(child) { this.children.push(child); }
   };
 }
-const document={activeElement:null,body:element('body'),getElementById:id=>elements.get(id)||null,addEventListener:(kind,fn)=>listeners[kind]=fn,querySelector:()=>({content:'test-csrf'})};
+const document={activeElement:null,body:element('body'),getElementById:id=>elements.get(id)||null,addEventListener:(kind,fn)=>listeners[kind]=fn,querySelector:()=>({content:'test-csrf'}),createComment:()=>({replaceWith(node){this.restored=node;}})};
 document.body.dataset.terminal='true';
-for (const id of ['inspector','graphContainer','graphEmpty','graphNodes','graphLines','topologyStats','sentinelNetwork','fleetBody','graphToolbar','graphViewport','graphStage','graphScene','graphZoom','graphZoomIn','graphZoomOut','graphFit','graphReset','graphLock','graphHint','graphFullscreen','graphExport','graphExportStatus']) elements.set(id,element(id));
+for (const id of ['inspector','terminalDialog','graphContainer','graphEmpty','graphNodes','graphLines','topologyStats','sentinelNetwork','fleetBody','graphToolbar','graphViewport','graphStage','graphScene','graphZoom','graphZoomIn','graphZoomOut','graphFit','graphReset','graphLock','graphHint','graphFullscreen','graphExport','graphExportStatus']) elements.set(id,element(id));
 let mobile=false;
-const context=vm.createContext({document,Intl,console,setTimeout,Blob,TextEncoder,window:{matchMedia:()=>({matches:mobile})}});
+const context=vm.createContext({document,Intl,console,setTimeout,Blob,TextEncoder,window:{matchMedia:()=>({matches:mobile}),getSelection:()=>({toString:()=>''})}});
 vm.runInContext(fs.readFileSync(path.join(__dirname,'../sentinel_atlas/static/graph-export.js'),'utf8'),context);
 const source=fs.readFileSync(path.join(__dirname,'../sentinel_atlas/static/app.js'),'utf8');
 const clickStart=source.indexOf("document.addEventListener('click'");
@@ -274,6 +277,7 @@ const click=async (name,tab)=>listeners.click({target:{closest:selector=>selecto
   reset();
   run("state.cluster='main';state.mode='live';selectedTab='terminal';renderInspector();");
   const terminalInput=elements.get('terminalInput');
+  assert.equal(document.activeElement,terminalInput,'Opening the terminal focuses the command editor');
   await listeners.click({target:{closest:selector=>selector==='[data-node]'?elements.get('inspector'):null}});
   assert.equal(run('selectedTab'),'terminal','Clicks inside the inspector must not reselect the node');
   terminalInput.value='GET "a key"';terminalInput.dispatch('input');
@@ -298,6 +302,13 @@ const click=async (name,tab)=>listeners.click({target:{closest:selector=>selecto
   let complete;
   context.fetch=()=>new Promise(resolve=>{complete=resolve;});
   const pending=run("executeTerminal('GET a')");
+  elements.get('terminalInput').value='GET next';elements.get('terminalInput').dispatch('input');
+  await run("executeTerminal('SET must-not-run value')");
+  assert.equal(run('terminalContext().session.draft'),'GET next','A draft can be typed while a command runs');
+  assert.equal(run('terminalContext().session.history.at(-1)'),'GET a','A pending command cannot be submitted twice');
+  await click('replica-b','terminal');
+  await click('primary','terminal');
+  assert.equal(elements.get('terminalInput').disabled,false,'Returning to a pending command keeps the editor available');
   await click('replica-b','terminal');
   complete({ok:true,status:200,json:async()=>({ok:true,output:'<script>untrusted</script>',database:3})});
   await pending;
@@ -305,9 +316,70 @@ const click=async (name,tab)=>listeners.click({target:{closest:selector=>selecto
   await click('primary','terminal');
   assert.match(elements.get('terminalOutput').textContent,/<script>untrusted<\/script>/,'Output is rendered as text');
   assert.doesNotMatch(elements.get('terminalOutput').innerHTML,/<script>/);
+  assert.equal(elements.get('terminalInput').value,'GET next','A pending command preserves the next draft');
+  // Zoom changes text size without replacing the editor or losing its draft.
+  const zoomInput=elements.get('terminalInput');
+  elements.get('terminalZoomIn').dispatch('click');
+  assert.equal(elements.get('redisTerminal').style['--terminal-font-size'],'15px');
+  assert.equal(elements.get('terminalZoomReset').textContent,'107%');
+  assert.equal(elements.get('terminalInput'),zoomInput);
+  assert.equal(zoomInput.value,'GET next');
+  for(let index=0;index<50;index++)run('zoomTerminal(1)');
+  assert.equal(elements.get('terminalZoomIn').disabled,true);
+  assert.equal(run('terminalView.fontSize'),24);
+  for(let index=0;index<50;index++)run('zoomTerminal(-1)');
+  assert.equal(elements.get('terminalZoomOut').disabled,true);
+  assert.equal(run('terminalView.fontSize'),10);
+  elements.get('terminalZoomReset').dispatch('click');
+  assert.equal(run('terminalView.fontSize'),14);
+  assert.equal(elements.get('redisTerminal').dispatch('keydown',{ctrlKey:true,key:'+'}).prevented,true);
+  assert.equal(run('terminalView.fontSize'),15);
+  elements.get('redisTerminal').dispatch('keydown',{metaKey:true,key:'0'});
+  assert.equal(run('terminalView.fontSize'),14);
+  // Expanded mode moves the inspector into a modal and keeps the same editor.
+  const background=element('background');background.inert=false;
+  document.body.children=[background,elements.get('terminalDialog')];
+  await run('toggleTerminalFullscreen()');
+  assert.equal(elements.get('terminalDialog').hidden,false);
+  assert.equal(elements.get('inspector').classList.contains('terminal-expanded'),true);
+  assert.equal(document.activeElement,zoomInput);
+  assert.equal(elements.get('terminalInput'),zoomInput);
+  assert.equal(background.inert,true,'Background controls cannot receive focus in fullscreen');
+  assert.equal(elements.get('terminalFullscreen')['aria-pressed'],'true');
+  const anchor=run('terminalView.anchor');
+  run('renderInspector()');
+  assert.equal(elements.get('terminalInput'),zoomInput,'Polling preserves the fullscreen editor');
+  const dialog=elements.get('terminalDialog'),firstControl=elements.get('terminalZoomOut'),lastControl=elements.get('terminalInput');
+  dialog.querySelectorAll=()=>[firstControl,lastControl];
+  lastControl.focus();
+  assert.equal(dialog.dispatch('keydown',{key:'Tab'}).prevented,true);
+  assert.equal(document.activeElement,firstControl,'Tab stays within fullscreen controls');
+  assert.equal(dialog.dispatch('keydown',{key:'Tab',shiftKey:true}).prevented,true);
+  assert.equal(document.activeElement,lastControl,'Shift+Tab stays within fullscreen controls');
   elements.get('terminalService').dispatch('change',{target:{value:'sentinel'}});
   assert.equal(run('terminalContext().service'),'sentinel');
   assert.equal(run('terminalContext().session.database'),0);
+  assert.equal(run('terminalView.expanded'),true,'Switching services keeps fullscreen open');
+  assert.match(elements.get('terminalFullscreen').innerHTML,/Exit fullscreen/);
+  elements.get('terminalDialog').dispatch('keydown',{key:'Escape'});
+  assert.equal(elements.get('terminalDialog').hidden,true);
+  assert.equal(anchor.restored,elements.get('inspector'));
+  assert.equal(document.body.classList.contains('terminal-fullscreen-open'),false);
+  assert.equal(background.inert,false,'Closing fullscreen restores background keyboard access');
+  // Repeated open/close works without browser fullscreen permissions or APIs.
+  await run('toggleTerminalFullscreen()');
+  assert.equal(run('terminalView.expanded'),true);
+  await run('toggleTerminalFullscreen()');
+  assert.equal(run('terminalView.expanded'),false);
+  await run('toggleTerminalFullscreen()');
+  await run('closeTerminalFullscreen()');
+  await run('closeTerminalFullscreen()');
+  assert.equal(run('terminalView.expanded'),false);
+  elements.get('terminalOutput').dispatch('click');
+  assert.equal(document.activeElement,elements.get('terminalInput'),'Clicking output focuses the command input');
+  context.window.getSelection=()=>({toString:()=> 'selected output'});
+  document.activeElement=null;elements.get('terminalOutput').dispatch('click');
+  assert.equal(document.activeElement,null,'Selecting output does not steal focus');
   run("state.mode='demo';renderInspector(true);");
   assert.match(elements.get('inspector').innerHTML,/DEMO TERMINAL · SIMULATED/);
   assert.match(elements.get('inspector').innerHTML,/Simulated commands only/);
@@ -315,5 +387,5 @@ const click=async (name,tab)=>listeners.click({target:{closest:selector=>selecto
   await run("executeTerminal('PING')");
   assert.equal(JSON.parse(request.body).command,'PING','Demo terminal accepts commands');
   assert.match(elements.get('terminalOutput').textContent,/PONG/);
-  console.log('UI checks passed: radial topology (1–100 nodes), fit/zoom, canvas and node dragging, live links, keyboard movement, view lock, fullscreen, polling preservation, failover, Sentinel health, configuration inspection, and mobile navigation.');
+  console.log('UI checks passed: topology (1–100 nodes), graph controls, replication, Sentinel health, configuration, mobile navigation, terminal commands, fullscreen, zoom, keyboard focus, and pending drafts.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

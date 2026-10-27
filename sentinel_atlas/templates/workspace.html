@@ -48,4 +48,5 @@
  <footer class="page-footer"><div class="project-credit"><span class="footer-brand">sentinel atlas</span><span>Created by <a href="https://github.com/alisharify7" target="_blank" rel="noopener noreferrer">Ali Sharify · @alisharify7</a> · <a href="https://ali-sharify.ir" target="_blank" rel="noopener noreferrer">ali-sharify.ir</a></span><span><a href="https://github.com/alisharify7/Sentinel-Atlas" target="_blank" rel="noopener noreferrer">Open source · GPL-2.0</a> · Made possible by the open source community{% if not shared %} · <a href="{{ url_for('about') }}">Credits &amp; contribute</a>{% endif %}</span></div>{% if monitoring %}<span id="lastUpdated">Waiting for the first observation</span>{% endif %}</footer>
  </main>
 </div>
+{% if monitoring and not shared and g.user.is_admin %}<div id="terminalDialog" class="terminal-dialog" role="dialog" aria-modal="true" aria-label="Redis terminal in fullscreen" hidden></div>{% endif %}
 </body></html>

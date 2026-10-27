@@ -332,6 +332,64 @@ function sentinelDetails(node) {
 }
 
 const terminalSessions=new Map(), terminalServices=new Map();
+const terminalView={expanded:false,fontSize:14,anchor:null,restoreFocus:null,bound:false,inertElements:[]};
+
+function focusTerminalInput() {
+  $('terminalInput')?.focus({preventScroll:true});
+}
+function syncTerminalView() {
+  const terminal=$('redisTerminal');
+  if(!terminal)return;
+  terminal.style.setProperty('--terminal-font-size',`${terminalView.fontSize}px`);
+  $('terminalZoomReset').textContent=`${Math.round(terminalView.fontSize/14*100)}%`;
+  $('terminalZoomOut').disabled=terminalView.fontSize<=10;
+  $('terminalZoomIn').disabled=terminalView.fontSize>=24;
+  const button=$('terminalFullscreen');
+  button.innerHTML=icon(terminalView.expanded?'collapse':'expand')+`<span>${terminalView.expanded?'Exit fullscreen':'Fullscreen'}</span>`;
+  button.title=terminalView.expanded?'Exit fullscreen (Esc)':'Fullscreen (Alt+Enter)';
+  button.setAttribute('aria-label',button.title);
+  button.setAttribute('aria-pressed',String(terminalView.expanded));
+}
+function zoomTerminal(delta) {
+  const output=$('terminalOutput'),atBottom=output&&output.scrollTop+output.clientHeight>=output.scrollHeight-24;
+  terminalView.fontSize=delta===0?14:Math.max(10,Math.min(24,terminalView.fontSize+delta));
+  syncTerminalView();
+  if(atBottom)output.scrollTop=output.scrollHeight;
+}
+function setTerminalExpanded(expanded) {
+  if(expanded===terminalView.expanded)return;
+  const inspector=$('inspector'),dialog=$('terminalDialog');
+  if(!inspector||!dialog)return;
+  if(expanded) {
+    terminalView.restoreFocus=document.activeElement;
+    terminalView.anchor=document.createComment('terminal inspector');
+    inspector.before(terminalView.anchor);
+    dialog.append(inspector);
+    terminalView.inertElements=[...document.body.children].filter(element=>element!==dialog).map(element=>[element,element.inert]);
+    for(const [element] of terminalView.inertElements)element.inert=true;
+    dialog.hidden=false;
+  }
+  terminalView.expanded=expanded;
+  inspector.classList.toggle('terminal-expanded',expanded);
+  document.body.classList.toggle('terminal-fullscreen-open',expanded);
+  if(!expanded) {
+    terminalView.anchor?.replaceWith(inspector);
+    terminalView.anchor=null;
+    dialog.hidden=true;
+    for(const [element,inert] of terminalView.inertElements)element.inert=inert;
+    terminalView.inertElements=[];
+  }
+  syncTerminalView();
+  if(expanded)focusTerminalInput();
+  else (terminalView.restoreFocus?.isConnected&&terminalView.restoreFocus!==document.body?terminalView.restoreFocus:$('terminalInput')||$('terminalFullscreen'))?.focus({preventScroll:true});
+}
+function closeTerminalFullscreen() {
+  setTerminalExpanded(false);
+}
+function toggleTerminalFullscreen() {
+  setTerminalExpanded(!terminalView.expanded);
+}
+
 function terminalContext(node=state?.nodes.find(n=>n.name===selected)) {
   if(!node)return null;
   const nodeKey=JSON.stringify([state.cluster,node.name]);
@@ -348,26 +406,28 @@ function terminalPrompt(context) {
 function terminalDetails(node) {
   const context=terminalContext(node),{session,service}=context;
   const demo=state.mode==='demo';
-  return `<section id="redisTerminal" class="redis-terminal"><div class="terminal-toolbar"><span class="terminal-label">${icon('terminal')} ${demo?'DEMO TERMINAL · SIMULATED':'LIVE TERMINAL'}</span><button type="button" class="terminal-clear" data-terminal-clear>Clear</button></div>
+  return `<section id="redisTerminal" class="redis-terminal" aria-label="${esc(node.name)} ${service} terminal"><div class="terminal-toolbar"><div class="terminal-heading"><span class="terminal-label">${icon('terminal')} ${demo?'DEMO TERMINAL · SIMULATED':'LIVE TERMINAL'}</span><strong>${esc(node.name)} <span>/ ${service==='redis'?'Redis':'Sentinel'}</span></strong></div><div class="terminal-actions" role="toolbar" aria-label="Terminal view controls"><div class="terminal-zoom"><button type="button" id="terminalZoomOut" title="Zoom out (Ctrl/⌘ −)" aria-label="Zoom terminal out">−</button><button type="button" id="terminalZoomReset" title="Reset zoom (Ctrl/⌘ 0)" aria-label="Reset terminal zoom">100%</button><button type="button" id="terminalZoomIn" title="Zoom in (Ctrl/⌘ +)" aria-label="Zoom terminal in">+</button></div><button type="button" id="terminalFullscreen" aria-pressed="false">${icon('expand')}<span>Fullscreen</span></button></div></div>
     <div class="terminal-controls"><label>Service <select id="terminalService" aria-label="Terminal service">${node.metadata.redis_member?`<option value="redis" ${service==='redis'?'selected':''}>Redis</option>`:''}${node.metadata.sentinel_member?`<option value="sentinel" ${service==='sentinel'?'selected':''}>Sentinel</option>`:''}</select></label><form id="terminalDatabaseForm"><label>DB <input id="terminalDatabase" type="number" min="0" max="2147483647" step="1" value="${session.database}" aria-label="Redis database" ${service==='sentinel'?'disabled':''}></label><button type="submit" ${service==='sentinel'||session.busy?'disabled':''}>Switch</button></form></div>
     <pre id="terminalOutput" class="terminal-output" role="log" aria-live="polite" aria-relevant="additions text" aria-label="Redis command output" tabindex="0"></pre>
-    <form id="terminalForm" class="terminal-input-row"><label id="terminalPrompt" for="terminalInput">${esc(terminalPrompt(context))}</label><input id="terminalInput" aria-label="Redis command" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="16384" placeholder="PING" value="${esc(session.draft)}" ${session.busy?'disabled':''}><button type="submit" aria-label="Run Redis command" ${session.busy?'disabled':''}>Run</button></form>
-    <p class="terminal-help">${demo?'Simulated commands only · no Redis or SSH connections. Try PING, GET demo:message, SELECT 2, or SET on the master. Demo data is temporary and private to your account.':'Enter a Redis command. SELECT 2 switches databases. ↑/↓ history · Ctrl+L clears · HELP for examples. Commands run immediately using the configured Redis permissions.'}</p></section>`;
+    <form id="terminalForm" class="terminal-input-row"><label id="terminalPrompt" for="terminalInput">${esc(terminalPrompt(context))}</label><input id="terminalInput" aria-label="Redis command" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="16384" placeholder="PING" value="${esc(session.draft)}"><button type="submit" aria-label="Run Redis command" ${session.busy?'disabled':''}>Run</button></form>
+    <div class="terminal-statusbar"><span id="terminalStatus" role="status">Ready</span><button type="button" class="terminal-clear" data-terminal-clear>Clear output</button><span>↑/↓ history · Ctrl+L clear · Alt+Enter fullscreen</span></div><p class="terminal-help">${demo?'Simulated commands only · no Redis or SSH connections. Try PING, GET demo:message, SELECT 2, or SET on the master. Demo data is temporary and private to your account.':'Enter a Redis command. SELECT 2 switches databases. HELP for examples. Commands run immediately using the configured Redis permissions.'}</p></section>`;
 }
 function updateTerminal(context=terminalContext(),focus=false) {
   if(!context||selectedTab!=='terminal'||terminalContext()?.key!==context.key||!$('terminalOutput'))return;
   const {session}=context, output=$('terminalOutput');
   const atBottom=output.scrollTop+output.clientHeight>=output.scrollHeight-24;
-  output.textContent=session.entries.join('\n')+(session.busy?'\nExecuting…':'');
+  output.textContent=session.entries.length?session.entries.join('\n'):`${context.service==='redis'?'Redis':'Sentinel'} terminal ready.\n\nType PING and press Enter to get started.\nUse the database control or SELECT to switch databases.\nOpen Fullscreen for more room, and use + / − to change text size.`;
   if(atBottom||focus)output.scrollTop=output.scrollHeight;
   $('terminalPrompt').textContent=terminalPrompt(context);
   $('terminalInput').value=session.draft;
+  $('terminalInput').disabled=false;
   const disabled=session.busy;
-  for(const control of $('terminalForm').querySelectorAll('input,button'))control.disabled=disabled;
+  // Allow drafting the next command while the current command is running.
+  for(const control of $('terminalForm').querySelectorAll('button'))control.disabled=disabled;
   for(const control of $('terminalDatabaseForm').querySelectorAll('input,button'))control.disabled=disabled||context.service==='sentinel';
   $('terminalDatabase').value=session.database;
-  $('redisTerminal').setAttribute('aria-busy',String(session.busy));
-  if(focus&&!disabled)$('terminalInput').focus({preventScroll:true});
+  $('terminalStatus').textContent=session.busy?'Executing… You can type your next command.':'Ready · Enter to run';
+  if(focus)focusTerminalInput();
 }
 function appendTerminal(session,text) {
   session.entries.push(text.slice(0,65536));
@@ -383,10 +443,10 @@ async function executeTerminal(command,context=terminalContext()) {
   const local=command.trim().toLowerCase();
   if(local==='clear'){session.entries=[];updateTerminal(context,true);return;}
   if(local==='help') {
-    appendTerminal(session,'PING · INFO · GET "my key" · SET "my key" "hello world" · SCAN 0 COUNT 100 · SELECT 2\nUse quotes for spaces and empty values. Each command uses an isolated connection.\nTransactions, subscriptions, and MONITOR need a persistent client and are unavailable here.');
+    appendTerminal(session,`PING · INFO · GET "my key" · SET "my key" "hello world" · ${state.mode==='demo'?'SCAN 0':'SCAN 0 COUNT 100'} · SELECT 2\nUse quotes for spaces and empty values. Each command uses an isolated connection.\n↑/↓ history · Ctrl+L clear · Ctrl/⌘ +/− zoom · Ctrl/⌘ 0 reset zoom · Alt+Enter fullscreen\nTransactions, subscriptions, and MONITOR need a persistent client and are unavailable here.`);
     updateTerminal(context,true);return;
   }
-  session.busy=true;updateTerminal(context);
+  session.busy=true;updateTerminal(context,true);
   try {
     const response=await apiFetch(`/api/terminal/${encodeURIComponent(node.name)}/${service}`,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':document.querySelector('meta[name="csrf-token"]').content},body:JSON.stringify({command,database:session.database})});
     const result=await response.json();
@@ -400,14 +460,38 @@ async function executeTerminal(command,context=terminalContext()) {
 function bindTerminal() {
   if(!$('redisTerminal'))return;
   updateTerminal();
+  syncTerminalView();
+  $('terminalZoomOut').addEventListener('click',()=>zoomTerminal(-1));
+  $('terminalZoomIn').addEventListener('click',()=>zoomTerminal(1));
+  $('terminalZoomReset').addEventListener('click',()=>zoomTerminal(0));
+  $('terminalFullscreen').addEventListener('click',toggleTerminalFullscreen);
+  $('redisTerminal').addEventListener('keydown',event=>{
+    if(event.altKey&&event.key==='Enter'){event.preventDefault();toggleTerminalFullscreen();}
+    if((event.ctrlKey||event.metaKey)&&['+','=','-','0'].includes(event.key)) {
+      event.preventDefault();zoomTerminal(event.key==='0'?0:event.key==='-'?-1:1);
+    }
+  });
+  $('terminalOutput').addEventListener('click',()=>{if(!window.getSelection()?.toString())focusTerminalInput();});
+  if(!terminalView.bound&&$('terminalDialog')) {
+    terminalView.bound=true;
+    $('terminalDialog').addEventListener('keydown',event=>{
+      if(event.key==='Escape'){event.preventDefault();closeTerminalFullscreen();}
+      if(event.key==='Tab') {
+        const controls=[...$('terminalDialog').querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex="0"]')].filter(element=>element.getClientRects().length);
+        const first=controls[0],last=controls.at(-1);
+        if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}
+        else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}
+      }
+    });
+  }
   $('terminalForm').addEventListener('submit',event=>{event.preventDefault();executeTerminal($('terminalInput').value);});
-  $('terminalDatabaseForm').addEventListener('submit',event=>{event.preventDefault();if($('terminalDatabase').checkValidity())executeTerminal(`SELECT ${$('terminalDatabase').value}`);});
+  $('terminalDatabaseForm').addEventListener('submit',event=>{event.preventDefault();if($('terminalDatabase').value!==''&&$('terminalDatabase').checkValidity())executeTerminal(`SELECT ${Number($('terminalDatabase').value)}`);});
   $('terminalService').addEventListener('change',event=>{terminalServices.set(terminalContext().nodeKey,event.target.value);renderInspector(true);});
   $('terminalInput').addEventListener('input',event=>{terminalContext().session.draft=event.target.value;});
   $('terminalInput').addEventListener('keydown',event=>{
     const {session}=terminalContext();
     if(event.ctrlKey&&event.key.toLowerCase()==='l'){event.preventDefault();session.entries=[];updateTerminal();}
-    if(event.ctrlKey&&event.key.toLowerCase()==='c'){event.preventDefault();session.draft='';updateTerminal();}
+    if(event.ctrlKey&&event.key.toLowerCase()==='c'&&event.target.selectionStart===event.target.selectionEnd){event.preventDefault();session.draft='';updateTerminal();}
     if(event.key==='ArrowUp'||event.key==='ArrowDown') {
       event.preventDefault();
       if(session.cursor===session.history.length)session.savedDraft=$('terminalInput').value;
@@ -427,6 +511,7 @@ function renderInspector(force=false) {
   const searchEnd = searchFocused ? document.activeElement.selectionEnd : null;
   const configScroll = $('inspector').dataset.node === selected ? $('configRows')?.scrollTop || 0 : 0;
   const node=state.nodes.find(n=>n.name===selected);
+  if(terminalView.expanded&&(!node||selectedTab!=='terminal'))closeTerminalFullscreen();
   if (!node) {
     $('inspector').innerHTML=`<div class="inspector-placeholder">${icon('server')}<h2>Inspect an instance</h2><p>Select a node to explore its configuration and monitoring details.</p></div>`;
     delete $('inspector').dataset.node;
@@ -459,6 +544,7 @@ function renderInspector(force=false) {
   bindTerminal();
   if ($('configRows')) $('configRows').scrollTop = configScroll;
   if (focusedTab) [...$('inspector').querySelectorAll('[data-tab]')].find(tab=>tab.dataset.tab===focusedTab)?.focus({preventScroll:true});
+  if(selectedTab==='terminal')focusTerminalInput();
   if (searchFocused && $('configSearch')) {
     $('configSearch').focus({preventScroll:true});
     $('configSearch').setSelectionRange(searchPosition, searchEnd);
