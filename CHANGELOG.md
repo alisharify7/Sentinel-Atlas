@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added Redis and Sentinel log downloads with UTF-8 files, the current filter and
+  paused observation, safe filenames, source/timestamp headers, and stale labels.
 - Improved terminals with fullscreen, text zoom controls and shortcuts, a clearer
   command prompt and execution status, and support for drafting the next command.
 - Added administrator terminals to each node's inspector, with Redis/Sentinel

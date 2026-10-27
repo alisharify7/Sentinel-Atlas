@@ -296,6 +296,15 @@ but its server/container remains reachable; empty paths use journald. Known Redi
 and Sentinel passwords and common credential patterns are redacted before
 transport. Other application content may still occur in logs.
 
+**Download logs** saves the selected Redis or Sentinel console view as a UTF-8
+`.log` file. Downloads contain the latest collected tail, apply the current text
+filter, and preserve a paused observation. They include the node, service, source,
+UTC observation/download times, and stale/demo labels. They do not fetch the full
+server file or open another SSH connection. Clear the filter for all collected
+lines. Downloads are available to anyone already permitted to view those logs;
+shared links still require the logs permission. The control is disabled when no
+collected lines match, or when log collection is unsupported or unavailable.
+
 Unreachable probes retain their last observations with stale labels. A background
 worker collects telemetry; browser polling reads a cached snapshot and does not
 open additional SSH/Redis connections. Slow collections do not overlap. The app

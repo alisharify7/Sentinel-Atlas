@@ -1,4 +1,11 @@
 /* Shared navigation and forms for the server-rendered workspace. */
+.log-download-note { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; padding: 0 24px 14px; color: #758ba5; font-size: 10px; }
+#logDownload { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+#logDownload svg { width: 14px; height: 14px; }
+#logDownload:disabled { opacity: .5; cursor: default; }
+#logDownloadStatus { color: #16775d; }
+#logDownloadStatus.error { color: #b14c60; }
+@media (max-width: 640px) { .log-download-note { padding-left: 16px; padding-right: 16px; } }
 .multipage .inspector-tabs { flex-wrap: wrap; }
 .multipage .inspector-content.terminal-content { display: block; padding: 12px; }
 .redis-terminal { --terminal-font-size: 14px; display: flex; flex-direction: column; min-width: 0; overflow: hidden; border: 1px solid #2d455f; border-radius: 12px; background: #0b1322; color: #d4e4f3; font: var(--terminal-font-size)/1.8 "SFMono-Regular", Consolas, "Liberation Mono", monospace; box-shadow: 0 12px 32px #09152618; }

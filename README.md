@@ -53,7 +53,7 @@ for Linux hardware, storage, and live service logs.
 | **Graph downloads** | Save the full current layout as standalone SVG, high-resolution PNG, or a single-page PDF, including nodes outside the visible area |
 | **Replication & Sentinel** | Follow observed upstream links, sampled offset gaps, full-sync progress, role changes, quorum, and master agreement |
 | **Instance explorer** | Search by name or address, filter by role or availability, and inspect configuration, memory, persistence, and optional server/storage details |
-| **Live logs** | Watch Redis and Sentinel output with filtering, pause/resume, and follow-scrolling through server probes |
+| **Live logs** | Watch Redis and Sentinel output, filter or pause it, and download the current collected view as a `.log` file |
 | **Node terminals** | Run live Redis or Sentinel commands as an administrator, switch databases with `SELECT` or the DB control, and recall commands with ↑/↓ |
 | **Cluster activity** | Filter discovery, outages, recoveries, warnings, and master promotions for the selected cluster |
 | **Multiple clusters** | Switch between caches and replication groups; keep the selected cluster and instance as you navigate |
@@ -239,6 +239,15 @@ selected instance in focus, and **Activity** filters discovery, outages, recover
 warnings, and promotions for the selected cluster. Navigation preserves the selected
 cluster and instance.
 
+On **Live logs**, choose an instance and the **Redis** or **Sentinel** tab, then
+click **Download logs**. The UTF-8 `.log` file contains the visible lines, source,
+node, service, and observation time. The download respects the text filter and
+paused view; clear the filter to export all collected lines. It exports the latest
+collected tail (up to 120 lines), rather than the complete server log file.
+Stale observations and demo data are labelled. Downloads use the existing log
+permissions, including shared links with logs enabled. Live server logs require
+an SSH/server probe; Redis protocol connections do not provide log files.
+
 Use **Your profile** to update your display name, username, email, team, biography,
 and timezone. Changing your username requires your current password. Changing your
 password signs out all sessions; you can also sign out just your other sessions.
@@ -417,7 +426,9 @@ python -m unittest discover -s tests -v
 node --check sentinel_atlas/static/app.js
 node --check sentinel_atlas/static/workspace.js
 node --check sentinel_atlas/static/graph-export.js
+node --check sentinel_atlas/static/log-export.js
 node tests/test_ui.js
+node tests/test_logs_ui.js
 ```
 
 The suite covers authentication, CSRF, profiles, account persistence, session
@@ -426,6 +437,8 @@ monitoring, server probes, topology changes, log limits, and credential filterin
 UI checks cover radial layouts from 1 to 100 nodes, cursor-anchored wheel/Ctrl zoom,
 dragging with live links, view locking, fullscreen, exports, failover, and view
 preservation during polling.
+Log export checks cover Redis/Sentinel file contents, UTF-8 text, filters, paused
+and stale observations, service switching, and download cleanup.
 The optional Ansible test skips when its
 dependencies are absent.
 

@@ -91,6 +91,17 @@ class StateTests(unittest.TestCase):
 
 
 class BoundaryTests(unittest.TestCase):
+    def test_log_download_controls_and_script_only_load_on_logs_page(self):
+        client=logged_in_client(DemoMonitor())
+        self.addCleanup(client.application.extensions['accounts'].engine.dispose)
+        html=client.get('/logs').text
+        self.assertIn('id="logDownload" disabled',html)
+        self.assertIn('id="logDownloadStatus"',html)
+        self.assertIn('/static/log-export.js',html)
+        self.assertIn('latest collected tail (up to 120 lines)',html)
+        for page in ('/live','/instances','/'):
+            self.assertNotIn('/static/log-export.js',client.get(page).text)
+
     def test_log_api_is_bounded_separate_from_metrics_and_handles_outages(self):
         demo=DemoMonitor()
         client=logged_in_client(demo)
@@ -219,7 +230,7 @@ class BoundaryTests(unittest.TestCase):
     def test_api_and_assets_work_without_external_project(self):
         client=logged_in_client(DemoMonitor())
         self.addCleanup(client.application.extensions['accounts'].engine.dispose)
-        for path in ('/','/static/app.css','/static/app.js','/static/graph-export.js','/static/workspace.js','/static/workspace.css','/static/observatory.css','/api/cluster'):
+        for path in ('/','/static/app.css','/static/app.js','/static/graph-export.js','/static/log-export.js','/static/workspace.js','/static/workspace.css','/static/observatory.css','/api/cluster'):
             with self.subTest(path=path):
                 response=client.get(path)
                 self.assertEqual(response.status_code,200)

@@ -30,7 +30,9 @@ python -m unittest discover -s tests -v
 node --check sentinel_atlas/static/app.js
 node --check sentinel_atlas/static/workspace.js
 node --check sentinel_atlas/static/graph-export.js
+node --check sentinel_atlas/static/log-export.js
 node tests/test_ui.js
+node tests/test_logs_ui.js
 ```
 
 For frontend changes, also inspect desktop and mobile layouts and keyboard access.

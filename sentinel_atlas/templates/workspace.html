@@ -7,7 +7,7 @@
  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='observatory.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='workspace.css') }}">
  <script src="{{ url_for('static', filename='workspace.js') }}" defer></script>
- {% if monitoring %}<script src="{{ url_for('static', filename='graph-export.js') }}" defer></script><script src="{{ url_for('static', filename='app.js') }}" defer></script>{% endif %}
+ {% if monitoring %}<script src="{{ url_for('static', filename='graph-export.js') }}" defer></script>{% if page == 'logs' %}<script src="{{ url_for('static', filename='log-export.js') }}" defer></script>{% endif %}<script src="{{ url_for('static', filename='app.js') }}" defer></script>{% endif %}
 </head>
 <body class="dashboard multipage" data-page="{{ page }}" data-share-revision="{{ share_revision|default('') }}" data-shared="{{ 'true' if shared else 'false' }}" data-terminal="{{ 'true' if not shared and g.user.is_admin else 'false' }}" data-config="{{ 'true' if not shared or permissions.config else 'false' }}" data-details="{{ 'true' if not shared or permissions.details else 'false' }}" data-api-base="{{ api_base|default('/api') }}" data-layout-key="{{ 'share-' ~ share.id if shared else 'user-' ~ g.user.id }}" data-timezone="{{ user_profile.timezone if user_profile else '' }}">
 <a class="skip-link" href="#mainContent">Skip to content</a>

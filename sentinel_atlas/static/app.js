@@ -781,7 +781,32 @@ function syncLogControls() {
     $('logSource').textContent=`${selected || 'No instance'} / ${logService==='redis'?'Redis':'Sentinel'}`;
     $('logOutput').innerHTML='<div class="log-empty">Reading the latest observation…</div>';
     $('logCount').textContent='0 lines';
+    if($('logDownloadStatus'))$('logDownloadStatus').textContent='';
     fetchLogs(true);
+  }
+  updateLogDownload();
+}
+function updateLogDownload() {
+  const button=$('logDownload');
+  if(!button)return;
+  const current=logPayload&&logPayload.node===selected&&logPayload.service===logService;
+  const filter=($('logFilter')?.value||'').toLowerCase();
+  const count=current?logPayload.lines.filter(line=>line.toLowerCase().includes(filter)).length:0;
+  button.disabled=!count||accessLost;
+  button.title=count?`Download ${count} ${logService==='redis'?'Redis':'Sentinel'} log line${count===1?'':'s'} as a .log file`:current&&logPayload.lines.length?'No lines match the current filter.':'Waiting for collected log lines. Server probes are required for live logs.';
+}
+function downloadLogs() {
+  const status=$('logDownloadStatus');
+  if(!status||accessLost)return;
+  status.classList.remove('error');
+  try {
+    if(!logPayload||logPayload.node!==selected||logPayload.service!==logService)throw Error('Wait for logs from the selected instance and service.');
+    // Capture synchronously, including the paused observation and current filter.
+    const snapshot=logExportSnapshot(logPayload,{filter:$('logFilter').value,mode:state?.mode});
+    downloadLogSnapshot(snapshot);
+    status.textContent=`${logService==='redis'?'Redis':'Sentinel'} download ready · ${snapshot.lineCount} line${snapshot.lineCount===1?'':'s'}.`;
+  } catch(error) {
+    status.classList.add('error');status.textContent=error.message||'Download failed. Please try again.';
   }
 }
 async function fetchLogs(force=false) {
@@ -803,6 +828,7 @@ async function fetchLogs(force=false) {
   } finally {clearTimeout(timer);}
 }
 function renderLogs() {
+  updateLogDownload();
   if (!logPayload) return;
   const data=logPayload, filter=$('logFilter').value.toLowerCase();
   const visible=data.lines.map((text,index)=>({text,index})).filter(line=>line.text.toLowerCase().includes(filter));
@@ -839,6 +865,7 @@ $('logNode')?.addEventListener('change',event=>{
   if(typeof syncWorkspaceLocation==='function'&&!sharedView)syncWorkspaceLocation(activeCluster,selected);
 });
 $('logFilter')?.addEventListener('input',renderLogs);
+$('logDownload')?.addEventListener('click',downloadLogs);
 $('logPause')?.addEventListener('click',()=>{
   logPaused=!logPaused;
   $('logPause').textContent=logPaused?'Resume':'Pause';$('logPause').setAttribute('aria-pressed',String(logPaused));
